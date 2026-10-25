@@ -684,6 +684,36 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIsInstance(self.app.screen, self.ui.Ask)
             self.assertEqual(self.app.terminals("dev"), [])
 
+    async def test_terminal_select_and_copy(self):
+        async with self.start() as pilot:
+            await self.ready(pilot)
+            await pilot.press("enter", "enter")  # a shell
+            await pilot.pause(0.3)
+            term = self.app.terminals("dev")[0]
+            await self.wait_for(pilot, lambda: "session: shell dev" in self.screen_text(term))
+            y = next(i for i, line in enumerate(term.vt.display) if "session: shell dev" in line)
+            x = term.vt.display[y].index("shell")
+            copied = []
+            self.app.copy_to_clipboard = copied.append
+            await pilot.mouse_down(term, offset=(x, y))
+            await pilot.hover(term, offset=(x + 5, y))
+            await pilot.mouse_up(term, offset=(x + 5, y))
+            await pilot.pause(0.1)
+            self.assertEqual(copied, [])  # letting go does not copy
+            await pilot.press("left_control")  # Ctrl alone: the selection stays
+            await pilot.press("ctrl+shift+c")  # copies, and the selection goes
+            await pilot.pause(0.1)
+            self.assertEqual(copied, ["shell"])
+            self.assertIsNone(term.text_selection)
+            await pilot.mouse_down(term, offset=(x, y))
+            await pilot.hover(term, offset=(x + 5, y))
+            await pilot.mouse_up(term, offset=(x + 5, y))
+            await pilot.press("a")  # another key: the selection goes, the key goes on
+            self.assertIsNone(term.text_selection)
+            await pilot.press("enter")
+            await self.wait_for(pilot, lambda: "you typed: a" in self.screen_text(term))
+            self.assertIn("you typed: a", self.screen_text(term))
+
     async def test_terminal_keys(self):
         k = self.ui.key_bytes
         self.assertEqual(k("ctrl+c", None), b"\x03")

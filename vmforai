@@ -988,6 +988,9 @@ In the terminal tabs every key goes to the VM, except:
   F1       a shell               F2 to F6  Claude Code, Codex, Gemini CLI, OpenCode, aider
   Ctrl+]   back to the list (the tabs keep running)
 A tab closes when what runs in it ends. The mouse wheel scrolls back.
+Drag with the mouse to select text, Ctrl+Shift+C copies it. kitty keeps
+Ctrl+Shift+C for itself; this line in kitty.conf passes it on to vmforai:
+  map --when-focus-on var:vmforai=1 ctrl+shift+c send_key ctrl+shift+c
 
 It runs this vmforai, so all it does works from the command line too. Needs
 Python with Textual 8 and pyte; with uv installed vmforai fetches them itself.
@@ -8540,6 +8543,7 @@ import os
 import pty
 import re
 import shlex
+import shutil
 import signal
 import struct
 import subprocess
@@ -8639,6 +8643,7 @@ TEXTS = {"tr": {
     "autostop on": "çıkınca kapanır", "autostop off": "çıkınca açık kalır",
     "notifications on": "bildirimler açık", "notifications off": "bildirimler kapalı",
     "clipboard on": "pano açık", "clipboard off": "pano kapalı",
+    "Copied.": "Kopyalandı.",
     "Open here: {list}  [dim](Enter to go back)[/]": "Burada açık: {list}  [dim](dönmek için Enter)[/]",
     "[dim]From a terminal: vmforai {n}{more}[/]": "[dim]Terminalden: vmforai {n}{more}[/]",
     "No VM selected. Press n to make one.": "Seçili VM yok. Oluşturmak için n'ye bas.",
@@ -9714,6 +9719,7 @@ SPECIAL_KEYS = {
     "f7": b"\x1b[18~", "f8": b"\x1b[19~", "f9": b"\x1b[20~", "f10": b"\x1b[21~", "f11": b"\x1b[23~",
     "f12": b"\x1b[24~",
 }
+COPY_KEYS = {"ctrl+shift+c", "super+c"}
 CURSOR_KEYS = {"up": b"A", "down": b"B", "right": b"C", "left": b"D", "home": b"H", "end": b"F"}
 MODIFIERS = {"shift": 2, "alt": 3, "shift+alt": 4, "ctrl": 5, "shift+ctrl": 6, "ctrl+shift": 6, "alt+ctrl": 7,
              "ctrl+alt": 7}
@@ -9886,6 +9892,12 @@ class Terminal(Widget, can_focus=True):
         event.stop()
         event.prevent_default()
         data = key_bytes(event.key, event.character, self.vt is not None and MODE_CURSOR_KEYS in self.vt.mode)
+        if self.text_selection is not None:  # (selected with the mouse)
+            if event.key in COPY_KEYS:
+                self.copy_selection()
+                return
+            if data:  # not Ctrl or Shift alone
+                self.screen.clear_selection()
         if data:
             self.send(data)
 
@@ -9922,6 +9934,26 @@ class Terminal(Widget, can_focus=True):
     def on_blur(self):
         self.refresh()
 
+    # Text selection: drag with the mouse; Ctrl+Shift+C copies it (Ctrl+C stays ^C for the program).
+    def copy_selection(self):
+        if text := self.screen.get_selected_text():
+            self.app.copy_to_clipboard(text)
+            self.app.notify(T("Copied."), timeout=2)
+        self.screen.clear_selection()
+
+    def line_text(self, y):
+        row = self.vt.buffer[y]
+        return "".join(row[x].data for x in range(self.vt.columns))
+
+    def get_selection(self, selection):
+        if self.vt is None:
+            return None
+        text = selection.extract("\n".join(self.line_text(y) for y in range(self.vt.lines)))
+        return "\n".join(line.rstrip() for line in text.split("\n")), "\n"
+
+    def selection_updated(self, selection):
+        self.refresh()
+
     def render_line(self, y):
         width = self.size.width
         vt = self.vt
@@ -9930,20 +9962,33 @@ class Terminal(Widget, can_focus=True):
         row = vt.buffer[y]
         cur = vt.cursor
         show_cursor = self.has_focus and not cur.hidden and cur.y == y and self.rc is None
-        segments, text, style_key = [], [], None
+        span = self.text_selection.get_span(y) if self.text_selection is not None else None
+        if span is not None:
+            sel_start, sel_end = span[0], vt.columns if span[1] == -1 else span[1]
+            sel_style = self.screen.get_component_rich_style("screen--selection")
+        # Each piece carries its offset (in characters), so a mouse drag selects text.
+        segments, text, style_key, i, start = [], [], None, 0, 0
+
+        def piece():
+            style = cell_style(*style_key[:7])
+            if style_key[7]:
+                style += sel_style
+            segments.append(Segment("".join(text), style + Style.from_meta({"offset": (start, y)})))
+
         for x in range(vt.columns):
             ch = row[x]
             if ch.data == "":  # the right half of a wide character
                 continue
             key = (ch.fg, ch.bg, ch.bold, ch.italics, ch.underscore, ch.strikethrough,
-                   ch.reverse != (show_cursor and x == cur.x))
+                   ch.reverse != (show_cursor and x == cur.x), span is not None and sel_start <= i < sel_end)
             if key != style_key and text:
-                segments.append(Segment("".join(text), cell_style(*style_key)))
-                text = []
+                piece()
+                text, start = [], i
             style_key = key
             text.append(ch.data)
+            i += 1
         if text:
-            segments.append(Segment("".join(text), cell_style(*style_key)))
+            piece()
         return Strip(segments).adjust_cell_length(width)
 
 
@@ -10123,6 +10168,20 @@ SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 TAB_ACTIONS = {"home", "back_to_tab", "prev_tab", "next_tab", "goto_tab", "open_kind"}
 
 
+def clip_commands():
+    """The clipboard tool here, as clip_put in vmforai picks it."""
+    if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
+        return ["wl-copy"]
+    if os.environ.get("DISPLAY"):
+        if shutil.which("xclip"):
+            return ["xclip", "-selection", "clipboard", "-in"]
+        if shutil.which("xsel"):
+            return ["xsel", "--clipboard", "--input"]
+    if os.uname().sysname == "Darwin" and shutil.which("pbcopy"):
+        return ["pbcopy"]
+    return None
+
+
 class VmforaiUI(App):
     """One row of tabs: the VM list first, then a tab for each terminal (a
     shell or an AI assistant on a VM) and for each VM being created."""
@@ -10235,6 +10294,15 @@ class VmforaiUI(App):
                 log.can_focus = False  # the keys are for the list
                 yield log
         yield Footer()
+
+    def copy_to_clipboard(self, text):
+        super().copy_to_clipboard(text)  # OSC 52: kitty, WezTerm, foot, iTerm2... put it in the clipboard
+        if argv := clip_commands():  # the others (Konsole, GNOME Terminal) do not
+            try:
+                subprocess.run(argv, input=text.encode(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=3, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
 
     def on_mount(self):
         self.main.query_one(Tabs).can_focus = False
@@ -11099,8 +11167,19 @@ class VmforaiUI(App):
             text.append(T("{n} is still being created; quitting stops that.", n=", ".join(c.v["name"] for c in making)))
         self.push_screen(Confirm("\n\n".join(text), yes=T("Quit")), sure)
 
+def kitty_var(on):
+    """kitty keeps Ctrl+Shift+C for itself; with this user variable set a
+    kitty.conf line can pass it on here (vmforai help ui)."""
+    if os.environ.get("KITTY_WINDOW_ID") and os.isatty(1):
+        os.write(1, b"\x1b]1337;SetUserVar=vmforai" + (b"=MQ==" if on else b"") + b"\x07")
+
+
 def main():
-    VmforaiUI().run()
+    kitty_var(True)
+    try:
+        VmforaiUI().run()
+    finally:
+        kitty_var(False)
 
 
 if __name__ == "__main__":
