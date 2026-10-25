@@ -19,7 +19,7 @@ if [[ -n ${VMFORAI_HOST_PATH:-} ]]; then
   unset VIRTUAL_ENV VMFORAI_HOST_PATH
 fi
 
-VERSION=0.25.0
+VERSION=0.25.1
 PROG=${0##*/}
 # vmforai was called vmagents (0.11 to 0.24) and vmclaude before that: their
 # settings in the environment (VMAGENTS_..., VMCLAUDE_...) still count.
@@ -988,9 +988,12 @@ In the terminal tabs every key goes to the VM, except:
   F1       a shell               F2 to F6  Claude Code, Codex, Gemini CLI, OpenCode, aider
   Ctrl+]   back to the list (the tabs keep running)
 A tab closes when what runs in it ends. The mouse wheel scrolls back.
-Drag with the mouse to select text, Ctrl+Shift+C copies it. kitty keeps
-Ctrl+Shift+C for itself; this line in kitty.conf passes it on to vmforai:
-  map --when-focus-on var:vmforai=1 ctrl+shift+c send_key ctrl+shift+c
+Drag with the mouse to select text: letting go copies it (Ctrl+Shift+C too,
+where the terminal passes it on; kitty keeps it for itself, and this line in
+kitty.conf passes it on to vmforai:
+  map --when-focus-on var:vmforai=1 ctrl+shift+c send_key ctrl+shift+c)
+F9 opens the last link in the tab in this computer's browser and copies it,
+a link that runs over several lines too (a login link, say).
 
 It runs this vmforai, so all it does works from the command line too. Needs
 Python with Textual 8 and pyte; with uv installed vmforai fetches them itself.
@@ -8644,6 +8647,9 @@ TEXTS = {"tr": {
     "notifications on": "bildirimler açık", "notifications off": "bildirimler kapalı",
     "clipboard on": "pano açık", "clipboard off": "pano kapalı",
     "Copied.": "Kopyalandı.",
+    "Open link": "Linki aç", "No link in this tab.": "Bu sekmede link yok.",
+    "Opened in the browser, and copied: {u}": "Tarayıcıda açıldı ve kopyalandı: {u}",
+    "Copied (no browser here): {u}": "Kopyalandı (burada tarayıcı yok): {u}",
     "Open here: {list}  [dim](Enter to go back)[/]": "Burada açık: {list}  [dim](dönmek için Enter)[/]",
     "[dim]From a terminal: vmforai {n}{more}[/]": "[dim]Terminalden: vmforai {n}{more}[/]",
     "No VM selected. Press n to make one.": "Seçili VM yok. Oluşturmak için n'ye bas.",
@@ -9720,6 +9726,7 @@ SPECIAL_KEYS = {
     "f12": b"\x1b[24~",
 }
 COPY_KEYS = {"ctrl+shift+c", "super+c"}
+URL_RE = re.compile(r"https?://[^\s<>\"'`│]+")
 CURSOR_KEYS = {"up": b"A", "down": b"B", "right": b"C", "left": b"D", "home": b"H", "end": b"F"}
 MODIFIERS = {"shift": 2, "alt": 3, "shift+alt": 4, "ctrl": 5, "shift+ctrl": 6, "ctrl+shift": 6, "alt+ctrl": 7,
              "ctrl+alt": 7}
@@ -9954,6 +9961,26 @@ class Terminal(Widget, can_focus=True):
     def selection_updated(self, selection):
         self.refresh()
 
+    def on_mouse_up(self, event):
+        # Many terminals (xfce4-terminal, GNOME Terminal, Konsole) keep Ctrl+Shift+C: letting go copies.
+        self.call_after_refresh(self.copy_on_release)
+
+    def copy_on_release(self):
+        if self.text_selection is not None and (text := self.screen.get_selected_text()):
+            self.app.copy_to_clipboard(text)
+            self.app.notify(T("Copied."), timeout=2)
+
+    def links(self):
+        """The links on the screen. A full line goes on in the next one, so a
+        link the program wrapped over several lines comes back whole."""
+        if self.vt is None:
+            return []
+        text = ""
+        for y in range(self.vt.lines):
+            line = self.line_text(y)
+            text += line if len(line.rstrip()) == self.vt.columns else line.rstrip() + "\n"
+        return [u.rstrip(".,;:)]}'") for u in URL_RE.findall(text)]
+
     def render_line(self, y):
         width = self.size.width
         vt = self.vt
@@ -10182,6 +10209,20 @@ def clip_commands():
     return None
 
 
+def open_url(url):
+    """Opens a link in this computer's browser (quietly: its output would land in the UI)."""
+    gui = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    cmd = ["open"] if os.uname().sysname == "Darwin" else ["xdg-open"] if gui else None
+    if not cmd or not shutil.which(cmd[0]):
+        return False
+    try:
+        subprocess.Popen(cmd + [url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return False
+    return True
+
+
 class VmforaiUI(App):
     """One row of tabs: the VM list first, then a tab for each terminal (a
     shell or an AI assistant on a VM) and for each VM being created."""
@@ -10266,7 +10307,8 @@ class VmforaiUI(App):
             return home + tabs
         return home + [Binding("f1", "open_kind('shell')", T("Shell"), priority=True)] + [
             Binding(f"f{i}", f"open_kind('{k}')", label, priority=True)
-            for i, (k, label) in enumerate(AGENTS, start=2)] + tabs
+            for i, (k, label) in enumerate(AGENTS, start=2)] + tabs + [
+            Binding("f9", "open_link", T("Open link"), priority=True)]
 
     @property
     def main(self):
@@ -10683,6 +10725,21 @@ class VmforaiUI(App):
         w = self.pane(self.current_pane())
         if isinstance(w, Terminal):
             self.open_session(w.vm_name, kind)
+
+    def action_open_link(self):
+        """F9: the last link in the tab, in this computer's browser, and in the clipboard."""
+        w = self.pane(self.current_pane())
+        links = w.links() if isinstance(w, Terminal) else []
+        if not links:
+            self.notify(T("No link in this tab."))
+            return
+        url = links[-1]
+        self.copy_to_clipboard(url)
+        short = url if len(url) < 70 else url[:67] + "..."
+        if open_url(url):
+            self.notify(T("Opened in the browser, and copied: {u}", u=short), timeout=6)
+        else:
+            self.notify(T("Copied (no browser here): {u}", u=short), timeout=6)
 
     @on(Terminal.Exited)
     def exited(self, event):

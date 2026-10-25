@@ -251,6 +251,8 @@ Vim keys too (`j`/`k` move, `l` or Enter open, `h` or Esc back).
 | `F2` … `F6` | Claude Code, Codex, Gemini CLI, OpenCode, aider |
 | `Ctrl+]` | the list |
 | `F7` / `F8` | previous / next tab (also `Ctrl+PgUp` / `Ctrl+PgDn`, where the terminal passes them on) |
+| drag with the mouse | selects text; letting go copies it (`Ctrl+Shift+C` too, where the terminal passes it on) |
+| `F9` | opens the last link in the tab (a login link, say) in your browser here, and copies it |
 | everything else | goes to the VM; the mouse wheel scrolls back |
 
 </details>

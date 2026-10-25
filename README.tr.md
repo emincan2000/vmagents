@@ -254,6 +254,8 @@ dilini değiştirir (English / Türkçe) ve seçim hatırlanır.
 | `F2` … `F6` | Claude Code, Codex, Gemini CLI, OpenCode, aider |
 | `Ctrl+]` | liste |
 | `F7` / `F8` | önceki / sonraki sekme (terminalin geçirdiği yerde `Ctrl+PgUp` / `Ctrl+PgDn` de) |
+| fareyle sürükle | metin seçer; bırakınca kopyalanır (terminalin geçirdiği yerde `Ctrl+Shift+C` de) |
+| `F9` | sekmedeki son linki (bir giriş linki gibi) buradaki tarayıcında açar ve kopyalar |
 | diğer her şey | VM'e gider; fare tekerleği geriye kaydırır |
 
 </details>

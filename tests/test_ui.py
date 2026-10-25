@@ -699,11 +699,11 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             await pilot.hover(term, offset=(x + 5, y))
             await pilot.mouse_up(term, offset=(x + 5, y))
             await pilot.pause(0.1)
-            self.assertEqual(copied, [])  # letting go does not copy
+            self.assertEqual(copied, ["shell"])  # letting go copies (most terminals keep Ctrl+Shift+C)
             await pilot.press("left_control")  # Ctrl alone: the selection stays
-            await pilot.press("ctrl+shift+c")  # copies, and the selection goes
+            await pilot.press("ctrl+shift+c")  # copies again, and the selection goes
             await pilot.pause(0.1)
-            self.assertEqual(copied, ["shell"])
+            self.assertEqual(copied, ["shell", "shell"])
             self.assertIsNone(term.text_selection)
             await pilot.mouse_down(term, offset=(x, y))
             await pilot.hover(term, offset=(x + 5, y))
@@ -713,6 +713,31 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await self.wait_for(pilot, lambda: "you typed: a" in self.screen_text(term))
             self.assertIn("you typed: a", self.screen_text(term))
+
+    async def test_f9_opens_the_last_link(self):
+        url = "https://claude.ai/oauth/authorize?code=true&client_id=" + "x" * 150 + "&state=abc"
+        async with self.start() as pilot:
+            await self.ready(pilot)
+            await pilot.press("enter", "enter")  # a shell
+            await pilot.pause(0.3)
+            term = self.app.terminals("dev")[0]
+            await self.wait_for(pilot, lambda: "session: shell dev" in self.screen_text(term))
+            opened, copied = [], []
+            self.ui.open_url = lambda u: opened.append(u) or True
+            self.app.copy_to_clipboard = copied.append
+            await pilot.press("f9")
+            await pilot.pause(0.1)
+            self.assertEqual(opened, [])  # no link yet
+            await pilot.press(*"go to http://first.example/a then")
+            await pilot.press("enter")
+            await self.wait_for(pilot, lambda: "you typed: go to" in self.screen_text(term))
+            await pilot.press(*url, "enter")  # longer than a line: it wraps
+            await self.wait_for(pilot, lambda: "state=abc" in self.screen_text(term))
+            self.assertTrue(any(len(line.rstrip()) == term.vt.columns for line in term.vt.display))
+            await pilot.press("f9")
+            await pilot.pause(0.1)
+            self.assertEqual(opened, [url])
+            self.assertEqual(copied, [url])
 
     async def test_terminal_keys(self):
         k = self.ui.key_bytes
