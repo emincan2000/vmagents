@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="docs/vimi.gif" width="180" alt="Vimi, the vmforai mascot, dancing with her robot Bit">
   <h1>vmforai</h1>
   <p><i>Run AI coding agents inside a virtual machine, not on your computer</i></p>
 

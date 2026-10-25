@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="docs/vimi.gif" width="180" alt="vmforai'ın maskotu Vimi, robotu Bit ile dans ediyor">
   <h1>vmforai</h1>
   <p><i>Yapay zeka kodlama asistanlarını kendi bilgisayarında değil, bir sanal makinede çalıştır</i></p>
 
