@@ -1,16 +1,20 @@
-"""Puts the phone recording (phone.mjs) together: each frame in a phone's
-frame, its caption on the right, the slow parts sped up as marks.json says.
+"""Puts a recording (phone.mjs, desktop.mjs) together, the slow parts sped
+up as marks.json says: phone: each frame in a phone's frame, its caption on
+the right; window: each frame in a browser window, its caption below.
 Writes the frames and a GIF of them (ImageMagick). Needs Pillow.
-Usage: phone_video.py PHONE_DIR OUT.gif"""
+Usage: video.py DIR OUT.gif [phone|window] [TITLE]"""
 import json, subprocess, sys
 from PIL import Image, ImageDraw, ImageFont
 
 src, gif = sys.argv[1], sys.argv[2]
+layout = sys.argv[3] if len(sys.argv) > 3 else "phone"
+title = sys.argv[4] if len(sys.argv) > 4 else ""
 W, H, BG, FPS = 1024, 646, "#272822", 10
 frames = json.load(open(f"{src}/frames.json"))
 marks = json.load(open(f"{src}/marks.json"))
 big = ImageFont.truetype("DejaVuSans-Bold.ttf", 30)
 small = ImageFont.truetype("DejaVuSans.ttf", 19)
+mid = ImageFont.truetype("DejaVuSans-Bold.ttf", 22)
 
 
 def frame_at(t):
@@ -42,10 +46,8 @@ for m, nxt in zip(marks, marks[1:]):
             out.append([key, 1])
         t += step
 
-files = []
-for n, ((i, caption, speed), count) in enumerate(out):
-    phone = Image.open(f"{src}/frames/{i:05d}.jpg").convert("RGB")
-    phone = phone.resize((round(phone.width * ph_h / phone.height), ph_h), Image.LANCZOS)
+def phone_frame(shot, caption, speed):
+    phone = shot.resize((round(shot.width * ph_h / shot.height), ph_h), Image.LANCZOS)
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
     x, y = 120, 28
@@ -61,6 +63,32 @@ for n, ((i, caption, speed), count) in enumerate(out):
         ty += 42
     if speed > 1:
         d.text((tx, ty + 14), f"▶▶ {speed}× speed", font=small, fill="#9ba79d")
+    return img
+
+
+def window_frame(shot, caption, speed):
+    """A browser window (a title bar with the page's address) and the caption below it."""
+    img = Image.new("RGB", (W, H), BG)
+    d = ImageDraw.Draw(img)
+    bar, x, y = 30, 24, 14
+    w = W - 2 * x
+    page = shot.resize((w, round(shot.height * w / shot.width)), Image.LANCZOS)
+    d.rounded_rectangle((x, y, x + w, y + bar + page.height), 10, fill="#e8e8e6")
+    for i, c in enumerate(("#ff5f57", "#febc2e", "#28c840")):
+        d.ellipse((x + 12 + i * 20, y + 9, x + 24 + i * 20, y + 21), fill=c)
+    d.rounded_rectangle((x + 90, y + 5, x + w - 90, y + bar - 5), 6, fill="#ffffff")
+    d.text((x + 102, y + 7), title, font=small, fill="#555555")
+    img.paste(page, (x, y + bar))
+    text = caption + (f"   ▶▶ {speed}× speed" if speed > 1 else "")
+    d.text((W // 2, y + bar + page.height + (H - y - bar - page.height) // 2), text, font=mid, fill="#f8f8f2",
+           anchor="mm")
+    return img
+
+
+files = []
+for n, ((i, caption, speed), count) in enumerate(out):
+    shot = Image.open(f"{src}/frames/{i:05d}.jpg").convert("RGB")
+    img = (window_frame if layout == "window" else phone_frame)(shot, caption, speed)
     files.append((f"{src}/v{n:04d}.png", count * 100 // FPS))
     img.save(files[-1][0])
 

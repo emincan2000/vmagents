@@ -17,7 +17,7 @@
 
 ---
 
-![vmforai: komut satırı (bir görev, sonra undo), beş asistanın sekmelerde açık olduğu terminal arayüzü ve telefondan bir VM'e görev verme](docs/demo.gif)
+![vmforai: komut satırı (bir görev, sonra undo), beş asistanın sekmelerde açık olduğu terminal arayüzü, telefondan bir VM'e görev verme ve bir VM'in tarayıcıdaki masaüstü](docs/demo.gif)
 
 **vmforai**, Claude Code, Codex, Gemini CLI, OpenCode ya da aider'ı tek
 komutla **bir sanal makinenin içinde** çalıştırır: VM'i başlatır, SSH ile
