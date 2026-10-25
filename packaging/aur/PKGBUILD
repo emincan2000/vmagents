@@ -1,6 +1,6 @@
 # Maintainer: EminY <57416756+emincan2000@users.noreply.github.com>
 pkgname=vmforai
-pkgver=0.25.0
+pkgver=0.25.1
 pkgrel=1
 pkgdesc="Run AI coding agents (Claude Code, Codex, Gemini CLI, OpenCode, aider) inside a virtual machine"
 arch=('any')
@@ -18,7 +18,7 @@ optdepends=('uv: fetches the terminal UI'"'"'s Python packages'
             'wl-clipboard: the shared clipboard on Wayland'
             'sshfs: vmforai mount')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('c84db664e497b5170cc105751d4e5c3b7c2ab57dc1dfa40a81af54cb78ec1a22')
+sha256sums=('1c35672610da00ddb62065cb5212124341aefecf95f038bdfe0f3c27778554c7')
 
 check() {
   cd "$pkgname-$pkgver"
