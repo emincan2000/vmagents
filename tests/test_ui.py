@@ -69,6 +69,14 @@ elif a[:1] == ["try"] and "--clean" not in a:
 elif a[:1] == ["project"]:
     print("Sending main of " + a[2] + " to " + a[1] + "...", flush=True)
     sys.exit(0 if "--discard" in a else int(os.environ.get("FAKE_PROJECT_RC", "0")))
+elif a[:1] == ["view"]:
+    if os.environ.get("FAKE_VIEW_RC"):
+        print(f"vmforai: {a[1]} has no desktop yet; add one (XFCE, about 1 GB): vmforai tools {a[1]} desktop",
+              flush=True)
+        sys.exit(int(os.environ["FAKE_VIEW_RC"]))
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+    print(f"The screen of {a[1]}, in remote-viewer. Close its window to stop.", flush=True)
+    time.sleep(30)
 elif a[:1] == ["open"]:
     signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
     for p in [x for x in a[2:] if x.isdigit()]:
@@ -977,6 +985,32 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             await self.wait_for(pilot, lambda: proc.poll() is not None)
             self.assertEqual(proc.poll(), 0)
             self.assertEqual(self.app.forwards["dev"], [])
+
+    async def test_view(self):
+        async with self.start() as pilot:
+            await self.ready(pilot)
+            await pilot.press("v")
+            await self.wait_for(pilot, lambda: self.app.forwards.get("dev"))
+            self.assertIn(["view", "dev", "--keep"], self.calls("view"))
+            self.assertIn("the screen", self.text("#details"))
+            await pilot.press("v")  # once is enough
+            await pilot.pause(0.2)
+            self.assertEqual(len(self.calls("view")), 1)
+            self.assertIn("The screen of dev is already open.", [n.message for n in self.app._notifications])
+            proc = self.app.forwards["dev"][0][0]
+            self.app.stop_forwards()  # as when quitting
+            await self.wait_for(pilot, lambda: proc.poll() is not None)
+            self.assertEqual(proc.poll(), 0)
+
+    async def test_view_without_a_desktop(self):
+        os.environ["FAKE_VIEW_RC"] = "1"
+        self.addCleanup(os.environ.pop, "FAKE_VIEW_RC")
+        async with self.start() as pilot:
+            await self.ready(pilot)
+            await pilot.press("v")
+            msg = "dev has no desktop yet; add one (XFCE, about 1 GB): vmforai tools dev desktop"
+            await self.wait_for(pilot, lambda: msg in [n.message for n in self.app._notifications])
+            self.assertEqual(self.app.forwards.get("dev", []), [])
 
     async def test_delete(self):
         async with self.start() as pilot:

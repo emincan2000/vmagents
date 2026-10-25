@@ -27,7 +27,7 @@ class LinuxTests(Base):
         self.assertEqual(r.returncode, 1)
         self.assertIn("installing them on vm failed", r.stderr)
         self.assertEqual(self.sb.run("tools", "vm", "a;b").returncode, 2)
-        self.assertIn("Tools for a VM: node python go rust java build", self.sb.run("tools", "vm", check=0).stdout)
+        self.assertIn("Tools for a VM: node python go rust java build desktop", self.sb.run("tools", "vm", check=0).stdout)
 
     def test_vm_that_was_off_goes_off_again(self):
         self.sb.set_vm("shut off")

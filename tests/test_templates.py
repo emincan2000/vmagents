@@ -36,9 +36,9 @@ class TemplateTests(CreateBase):
         t = {x["name"]: x for x in json.loads(self.sb.run("templates", "--json", check=0).stdout)}
         self.assertEqual(t["stack"]["packages"], ["node", "postgresql"])
         self.assertEqual(t["stack"]["setup"], "npm i -g pnpm")
-        self.assertEqual(sorted(t), ["go", "ml", "node", "python", "rust", "stack"])
+        self.assertEqual(sorted(t), ["desktop", "go", "ml", "node", "python", "rust", "stack"])
         self.assertEqual([x["name"] for x in json.loads(self.sb.run("images", "--json", check=0).stdout)["templates"]],
-                         ["node", "python", "ml", "go", "rust", "stack"])
+                         ["node", "python", "ml", "go", "rust", "desktop", "stack"])
         self.create("s", "--template", "stack")
         argv = self.virt_install()
         self.assertEqual(argv[argv.index("--memory") + 1], "8192")

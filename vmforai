@@ -19,7 +19,7 @@ if [[ -n ${VMFORAI_HOST_PATH:-} ]]; then
   unset VIRTUAL_ENV VMFORAI_HOST_PATH
 fi
 
-VERSION=0.25.1
+VERSION=0.26.0
 PROG=${0##*/}
 # vmforai was called vmagents (0.11 to 0.24) and vmclaude before that: their
 # settings in the environment (VMAGENTS_..., VMCLAUDE_...) still count.
@@ -122,7 +122,7 @@ COMMANDS
     create NAME          new Linux VM from an official cloud image, ready for Claude
     delete NAME          delete a VM made with create, with its disks
     images               list the images: which exist, which are downloaded, where
-    templates            what "create --template" offers (node, python, ml, go, rust, your own)
+    templates            what "create --template" offers (node, python, ml, go, rust, desktop, your own)
     prune                delete downloaded images that no VM uses any more
     resize NAME          change RAM and CPUs (--memory MB --cpus N)
     ui                   all of this in a terminal UI
@@ -133,6 +133,7 @@ COMMANDS
     start NAME           start a libvirt VM and wait until SSH answers
     stop NAME            shut a libvirt VM down (--force: pull the plug)
     open NAME PORT       open the VM's port PORT here (http://localhost:PORT)
+    view NAME            the VM's desktop here, in a window or the browser (tools NAME desktop)
     ports NAME 3000,...  ports forwarded each time you connect
     doctor NAME          check VM, network, SSH, key, Claude and tmux, step by step
     login NAME           log Claude in on the VM, with the browser of THIS computer
@@ -143,7 +144,7 @@ COMMANDS
     phone notify         notifications on the phone, through the ntfy app (off, test, --server)
     update               vmforai itself to its latest release (--check: only say if there is one)
     deps                 install what vmforai uses on this computer (--check: only look)
-    tools NAME TOOL...   install node, python, go, rust, java, build (or packages) in the VM
+    tools NAME TOOL...   install node, python, go, rust, java, build, desktop (or packages) in the VM
 
   Tasks (an agent works alone, in the background, without asking):
     run NAME "TASK"      start one (--codex, --gemini, ...; --wait: follow it here)
@@ -545,6 +546,30 @@ Needs notify-send here (Debian/Ubuntu: sudo apt install libnotify-bin).
 Examples:
   vmforai notify dev off
   vmforai notify dev on
+EOF
+      ;;
+    view) cat <<EOF
+vmforai view [NAME] [--browser] [--keep]
+
+Shows the desktop of a Linux VM here: what an agent opens there (a browser,
+a GUI app) and what you open yourself. Add a desktop to a VM first:
+  vmforai tools NAME desktop        (XFCE and Firefox, about 1 GB)
+or make a VM with one: vmforai create NAME --template desktop.
+
+The desktop is VNC display :1 on the VM (port 5901), which only the VM
+itself can reach; it starts with the VM, and the agents there get
+DISPLAY=:1. view brings it here over SSH and opens it in a VNC viewer
+(remote-viewer, from virt-viewer; or TigerVNC's vncviewer), or without one
+in your browser (noVNC). --browser: the browser even with a viewer.
+
+It runs until you close the window (or the browser tab, or Ctrl-C); then the
+VM shuts down if nothing else uses it, as after connect (--keep: leave it on).
+Windows VMs have their own desktop: view opens a libvirt one in virt-viewer.
+
+Examples:
+  vmforai tools dev desktop
+  vmforai view dev
+  vmforai view dev --browser
 EOF
       ;;
     open) cat <<EOF
@@ -980,6 +1005,7 @@ right the details of the selected one. Keys on the list:
   u        snapshots: pick one with j/k and go back to it (Enter), take one
            with a name and a label (n), change a label (e), delete one (d)
   o        ports: forward them now (and stop again), every time, or to your LAN
+  v        the VM's desktop, in a window or the browser (vmforai view)
   t        start or stop          r  RAM and CPUs
   d        delete (asks you to type the name)
   L        language: English, Türkçe (remembered)
@@ -1188,7 +1214,7 @@ Examples:
 Needs python3 on this computer. In Claude Code, /mcp shows the server.
 EOF
       ;;
-    *) usage_error "no help for '$1'; commands: ui create delete images prune resize connect shell start stop open ports autostop undo snapshot snapshots autosnap idle notify clipboard agent doctor login mcp mount umount add setup autostart list default desktop edit forget rm" ;;
+    *) usage_error "no help for '$1'; commands: ui create delete images prune resize connect shell start stop open view ports autostop undo snapshot snapshots autosnap idle notify clipboard agent doctor login mcp mount umount add setup autostart list default desktop edit forget rm" ;;
   esac
 }
 
@@ -1608,7 +1634,7 @@ cd_dir() {
 # vmforai's hooks (claude-settings.json in the same folder). A wrapper, not
 # tmux -e: tokens stay out of command lines.
 # shellcheck disable=SC2016
-CLAUDE_ENV_SH='p=${1%/*}/proxy-env; [ -r "$p" ] && { set -a; . "$p"; set +a; }; [ -r "$1" ] && { set -a; . "$1"; set +a; }; s=${1%/*}/claude-settings.json; shift; c=$1; shift; case ${c##*/} in claude) [ -r "$s" ] && exec "$c" --settings "$s" "$@" ;; esac; exec "$c" "$@"'
+CLAUDE_ENV_SH='p=${1%/*}/display-env; [ -r "$p" ] && { set -a; . "$p"; set +a; }; p=${1%/*}/proxy-env; [ -r "$p" ] && { set -a; . "$p"; set +a; }; [ -r "$1" ] && { set -a; . "$1"; set +a; }; s=${1%/*}/claude-settings.json; shift; c=$1; shift; case ${c##*/} in claude) [ -r "$s" ] && exec "$c" --settings "$s" "$@" ;; esac; exec "$c" "$@"'
 
 # ------------------------------------------------------------------ hooks, idle shutdown, notifications
 # Claude Code on the VM runs hook.sh from its hooks (loaded with --settings
@@ -4559,6 +4585,228 @@ cmd_open() {
   return 0
 }
 
+# ------------------------------------------------------------------ view
+
+# A Linux VM's desktop (vmforai tools NAME desktop) is VNC display :1 there,
+# for the VM only. view starts it when it is not running, brings port 5901
+# here over SSH and shows it: in a VNC viewer when there is one, else in the
+# browser (noVNC, through a small bridge here: VIEW_PY).
+# shellcheck disable=SC2016
+DESKTOP_START_SH='d=$HOME/.config/vmforai
+[ -x "$d/desktop.sh" ] || exit 3
+if [ ! -S /tmp/.X11-unix/X1 ]; then
+  systemctl --user start vmforai-desktop.service 2>/dev/null ||
+    { command -v setsid >/dev/null 2>&1 && setsid "$d/desktop.sh" </dev/null >/dev/null 2>&1 & }
+  i=0
+  while [ ! -S /tmp/.X11-unix/X1 ] && [ $i -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+  [ -S /tmp/.X11-unix/X1 ] || exit 4
+fi
+exit 0'
+
+cmd_view() {
+  local name='' browser=0 keep=0 a l w i pid rc=0 web='' tok viewer=''
+  while (($#)); do
+    a=$1; shift
+    case $a in
+      --browser) browser=1 ;;
+      --keep) keep=1 ;;
+      -*) usage_error "view: unknown option $a" ;;
+      *) [[ -z $name ]] || usage_error "view: more than one name given"; name=$a ;;
+    esac
+  done
+  [[ -n $name ]] || name=$(default_name) || usage_error "view: several VMs and no default; name one"
+  load "$name"
+  if [[ $C_OS == windows ]]; then
+    if [[ -n $C_DOMAIN ]] && command -v virt-viewer >/dev/null; then
+      virt-viewer --connect "$C_URI" "$C_DOMAIN" </dev/null >/dev/null 2>&1 || true
+      return 0
+    fi
+    die "a Windows VM has a desktop of its own: open it with Remote Desktop, or with virt-viewer (a libvirt VM)"
+  fi
+  resolve_target
+  build_ssh_opts
+  run_ssh -T -- "$TARGET" "$(remote_cmd "$REMOTE_ENV$DESKTOP_START_SH")" </dev/null || rc=$?
+  case $rc in
+    0) ;;
+    3) die "$NAME has no desktop yet; add one (XFCE, about 1 GB): $PROG tools $NAME desktop" ;;
+    4) die "the desktop of $NAME did not start; see: $PROG shell $NAME 'systemctl --user status vmforai-desktop'" ;;
+    *) die "could not reach $NAME (SSH exit code $rc). Try: $PROG doctor $NAME" ;;
+  esac
+  for ((l = 5901; l < 6000; l++)); do port_free "$l" && break; done
+  ((l < 6000)) || die "no free port for the screen here (5901 to 5999)"
+  ssh "${SSH_OPTS[@]}" -N -o ExitOnForwardFailure=yes -o LogLevel=ERROR -L "127.0.0.1:$l:localhost:5901" -- "$TARGET" </dev/null &
+  pid=$!
+  trap 'kill "$pid" "${web:-}" 2>/dev/null' INT TERM HUP
+  for ((i = 0; i < 300; i++)); do
+    kill -0 "$pid" 2>/dev/null || break
+    port_free "$l" || break
+    sleep 0.1
+  done
+  if ! kill -0 "$pid" 2>/dev/null; then
+    wait "$pid" || rc=$?
+    trap - INT TERM HUP
+    die "could not bring the screen here (SSH exit code $rc). Try: $PROG doctor $NAME"
+  fi
+  if ((!browser)); then
+    for a in remote-viewer vncviewer xtigervncviewer; do command -v "$a" >/dev/null && { viewer=$a; break; }; done
+  fi
+  if [[ -n $viewer ]]; then
+    say "The screen of $NAME, in $viewer. Close its window to stop."
+    case $viewer in
+      remote-viewer) remote-viewer --title "$NAME (vmforai)" "vnc://127.0.0.1:$l" </dev/null >/dev/null 2>&1 || true ;;
+      *) "$viewer" "127.0.0.1::$l" </dev/null >/dev/null 2>&1 || true ;;
+    esac
+  else
+    for ((w = 6080; w < 6180; w++)); do port_free "$w" && break; done
+    tok=$(head -c 18 /dev/urandom | base64 | tr '+/' '-_')
+    python3 -c "$VIEW_PY" "$l" "$w" "$tok" "$NAME" &
+    web=$!
+    for ((i = 0; i < 100; i++)); do port_free "$w" || break; sleep 0.1; done
+    say "The screen of $NAME: http://127.0.0.1:$w/#$tok"
+    if open_url "http://127.0.0.1:$w/#$tok"; then
+      say "It is open in your browser; closing that tab stops it (or Ctrl-C here)."
+    else
+      say "Open it in your browser here; closing that tab stops it (or Ctrl-C here)."
+    fi
+    say "(A VNC viewer shows it better: sudo apt install virt-viewer, or tigervnc-viewer.)"
+    wait "$web" 2>/dev/null || true
+  fi
+  kill "$pid" "${web:-}" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  trap - INT TERM HUP
+  ((keep)) || autostop
+  return 0
+}
+
+# The bridge for the browser: serves a page with noVNC (from jsDelivr) and
+# passes its WebSocket on to the screen's port here. Ends 20 s after the last
+# page went away (or 2 minutes without one). argv: VNCPORT WEBPORT TOKEN NAME
+VIEW_PY=$(cat <<'VIEW_END'
+import asyncio, base64, hashlib, html, secrets, struct, sys
+
+vnc, port, token, name = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
+NOVNC = "https://cdn.jsdelivr.net/npm/@novnc/novnc@1.7.0/core/rfb.js"
+PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>%s (vmforai)</title>
+<style>html,body{margin:0;height:100%%;background:#171c19;color:#e6ebe4;font:15px system-ui,sans-serif}
+#screen{position:fixed;inset:0}#msg{position:fixed;left:12px;bottom:10px;opacity:.8}</style></head>
+<body><div id="screen"></div><div id="msg">Connecting...</div><script type="module">
+import RFB from "%s";
+const msg = document.getElementById("msg");
+const rfb = new RFB(document.getElementById("screen"),
+  "ws://" + location.host + "/ws?t=" + encodeURIComponent(location.hash.slice(1)));
+rfb.scaleViewport = true; rfb.resizeSession = true;
+rfb.addEventListener("connect", () => { msg.textContent = ""; });
+rfb.addEventListener("disconnect", () => { msg.textContent = "Disconnected: run vmforai view again."; });
+</script></body></html>""" % (html.escape(name), NOVNC)
+clients, seen = 0, 0.0
+
+
+async def ws_read(r):
+    b1, b2 = await r.readexactly(2)
+    op, n = b1 & 15, b2 & 127
+    if n == 126:
+        n = struct.unpack(">H", await r.readexactly(2))[0]
+    elif n == 127:
+        n = struct.unpack(">Q", await r.readexactly(8))[0]
+    if n > 1 << 22:
+        raise ConnectionError("frame too big")
+    mask = await r.readexactly(4) if b2 & 128 else b"\0\0\0\0"
+    p = bytearray(await r.readexactly(n))
+    for i in range(n):
+        p[i] ^= mask[i % 4]
+    return op, bytes(p)
+
+
+def ws_frame(op, data):
+    n = len(data)
+    head = bytes([128 | op]) + (bytes([n]) if n < 126 else bytes([126]) + struct.pack(">H", n) if n < 1 << 16
+                                else bytes([127]) + struct.pack(">Q", n))
+    return head + data
+
+
+async def bridge(r, w):
+    vr, vw = await asyncio.open_connection("127.0.0.1", vnc)
+
+    async def to_vnc():
+        while True:
+            op, data = await ws_read(r)
+            if op == 8:
+                return
+            if op in (0, 1, 2):
+                vw.write(data)
+                await vw.drain()
+            elif op == 9:
+                w.write(ws_frame(10, data))
+
+    async def to_page():
+        while data := await vr.read(65536):
+            w.write(ws_frame(2, data))
+            await w.drain()
+
+    tasks = [asyncio.ensure_future(to_vnc()), asyncio.ensure_future(to_page())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        vw.close()
+
+
+async def http(r, w):
+    global clients, seen
+    try:
+        head = await asyncio.wait_for(r.readuntil(b"\r\n\r\n"), 20)
+        lines = head.decode("latin-1").split("\r\n")
+        target = lines[0].split(" ")[1]
+        h = {k.strip().lower(): v.strip() for k, v in (l.split(":", 1) for l in lines[1:] if ":" in l)}
+        if target == "/":
+            body = PAGE.encode()
+            w.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
+                    b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        elif (target.startswith("/ws?t=") and secrets.compare_digest(target[6:], token)
+              and h.get("upgrade", "").lower() == "websocket" and "sec-websocket-key" in h):
+            acc = base64.b64encode(hashlib.sha1((h["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+                                                .encode()).digest())
+            w.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                    b"Sec-WebSocket-Accept: " + acc + b"\r\n\r\n")
+            await w.drain()
+            clients += 1
+            try:
+                await bridge(r, w)
+            finally:
+                clients -= 1
+                seen = asyncio.get_running_loop().time()
+        else:
+            w.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+        await w.drain()
+    except (ConnectionError, asyncio.IncompleteReadError, asyncio.TimeoutError, asyncio.LimitOverrunError,
+            ValueError, IndexError, OSError):
+        pass
+    finally:
+        w.close()
+
+
+async def main():
+    global seen
+    server = await asyncio.start_server(http, "127.0.0.1", port)
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    async with server:
+        while True:
+            await asyncio.sleep(1)
+            now = loop.time()
+            if clients == 0 and (now - seen > 20 if seen else now - start > 120):
+                return
+
+
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    pass
+VIEW_END
+)
+
 # ------------------------------------------------------------------ projects
 
 # A git repository of this computer goes to the VM, where the agents work on
@@ -6307,7 +6555,8 @@ TEMPLATES_BUILTIN='node|Node.js web app: Node, npm, build tools|debian13|4096|2|
 python|Python: venv, pip, build tools|debian13|4096|2|20|claude|8000|python build|
 ml|Python for data and ML: more RAM, CPUs and disk, Jupyter port|debian13|16384|8|60|claude|8888|python build|
 go|Go: the go toolchain|debian13|4096|2|20|claude|8080|go build|
-rust|Rust: rustup with stable Rust, build tools|debian13|4096|4|30|claude|8080|rust build|'
+rust|Rust: rustup with stable Rust, build tools|debian13|4096|4|30|claude|8080|rust build|
+desktop|A desktop: XFCE and Firefox, for GUI apps and browsers (vmforai view)|debian13|6144|4|30|claude||desktop build|'
 
 template_names() {
   local f
@@ -6375,20 +6624,75 @@ tool_pkgs() {
     dnf:java) echo java-latest-openjdk-devel ;;
     zypper:java) echo java-devel ;;
     apk:java) echo openjdk21 ;;
+    apt:desktop) echo xfce4 xfce4-terminal dbus-x11 tigervnc-standalone-server \
+      "$(. /etc/os-release 2>/dev/null; [ "${ID:-}" = ubuntu ] && echo firefox || echo firefox-esr)" ;;
+    pacman:desktop) echo xfce4 tigervnc firefox ;;
+    dnf:desktop) echo xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal Thunar dbus-x11 tigervnc-server firefox ;;
+    zypper:desktop) echo xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-terminal thunar dbus-1-x11 xorg-x11-Xvnc MozillaFirefox ;;
+    apk:desktop) echo xfce4 xfce4-terminal dbus-x11 tigervnc firefox ;;
     *) echo "$2" ;;
   esac
 }
 '
-TOOLS_KNOWN="node python go rust java build"
+TOOLS_KNOWN="node python go rust java build desktop"
+
+# The desktop (tool "desktop"): XFCE on VNC display :1 (port 5901), which
+# only the VM itself can reach, as a user service that starts with the VM.
+# The agents get DISPLAY=:1 (display-env, read by the launcher); vmforai view
+# brings the screen here over SSH.
+# shellcheck disable=SC2016
+DESKTOP_SETUP_SH='desktop_setup() {
+  d=$HOME/.config/vmforai u=$HOME/.config/systemd/user
+  mkdir -p "$d" "$u" || return 1
+  cat >"$d/desktop.sh" <<"EOF"
+#!/bin/sh
+# vmforai: XFCE on VNC display :1 (port 5901), for this VM only; vmforai view shows it.
+X=$(command -v Xvnc || command -v Xtigervnc) || { echo "vmforai: no Xvnc (TigerVNC) here" >&2; exit 1; }
+[ -S /tmp/.X11-unix/X1 ] && ! pgrep -u "$(id -u)" -f "vnc :1" >/dev/null && rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+"$X" :1 -geometry 1600x900 -depth 24 -localhost -SecurityTypes None -AlwaysShared -desktop "$(hostname)" &
+x=$!
+trap "kill $x 2>/dev/null" EXIT INT TERM
+i=0
+while [ ! -S /tmp/.X11-unix/X1 ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+DISPLAY=:1 dbus-launch --exit-with-session startxfce4
+EOF
+  chmod +x "$d/desktop.sh" || return 1
+  cat >"$u/vmforai-desktop.service" <<"EOF"
+[Unit]
+Description=vmforai: the desktop (XFCE on VNC display :1, for vmforai view)
+
+[Service]
+ExecStart=%h/.config/vmforai/desktop.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF
+  echo DISPLAY=:1 >"$d/display-env"
+  if [ "$su_" != none ]; then
+    # The service runs without anyone logged in.
+    $su_ loginctl enable-linger "$(id -un)" 2>/dev/null || true
+    # A login screen that came along (apt'"'"'s recommends): nobody would see it, it only takes memory.
+    for dm in lightdm gdm3 gdm sddm; do
+      systemctl is-enabled "$dm" >/dev/null 2>&1 && $su_ systemctl disable "$dm" >/dev/null 2>&1
+    done
+  fi
+  systemctl --user daemon-reload 2>/dev/null || { sleep 3; systemctl --user daemon-reload; } || return 1
+  systemctl --user enable --now vmforai-desktop.service || return 1
+  echo "The desktop runs: XFCE, on the VM'"'"'s display :1. To see it: vmforai view"
+}
+'
 
 # On the VM: tools (above), then a command ($1, or empty; a template's SETUP).
 # shellcheck disable=SC2016
-TEMPLATE_SH=$REMOTE_ENV$PKG_SH$TOOL_PKGS_SH'setup=$1; shift
-list= rust=
+TEMPLATE_SH=$REMOTE_ENV$PKG_SH$TOOL_PKGS_SH$DESKTOP_SETUP_SH'setup=$1; shift
+list= rust= desktop=
 m=$(pkg_manager)
 for p in "$@"; do
   case $p in
     rust) rust=1 list="$list $(tool_pkgs "$m" build)" ;;  # (crates want a C compiler)
+    desktop) desktop=1 list="$list $(tool_pkgs "$m" desktop)" ;;
     *) list="$list $(tool_pkgs "$m" "$p")" ;;
   esac
 done
@@ -6400,6 +6704,9 @@ if [ -n "$rust" ] && ! command -v cargo >/dev/null 2>&1 && ! [ -x "$HOME/.cargo/
   echo "Installing Rust (rustup, stable)..."
   curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null || exit 1
   echo "Installed $("$HOME/.cargo/bin/rustc" --version)"
+fi
+if [ -n "$desktop" ]; then
+  desktop_setup || { echo "vmforai: setting up the desktop failed" >&2; exit 1; }
 fi
 if [ -n "$setup" ]; then
   echo "Running the template'"'"'s setup: $setup"
@@ -8596,10 +8903,10 @@ TEXTS = {"tr": {
     "working": "işlem sürüyor",
     "{n} VM": "{n} VM", "{n} VMs": "{n} VM", "no VMs yet: press n": "henüz VM yok: n'ye bas",
     "[dim]Enter or l: open · j/k: move · n: new VM · a: task · x: try on copies · p: project · c: changes · "
-    "f: fix an issue · H: history · i: network · o: ports · t: start/stop · u: snapshots · Y: yolo · m: phone · "
+    "f: fix an issue · H: history · i: network · o: ports · v: screen · t: start/stop · u: snapshots · Y: yolo · m: phone · "
     "L: language · q: quit[/]":
         "[dim]Enter ya da l: aç · j/k: gezin · n: yeni VM · a: görev · x: kopyalarda dene · p: proje · "
-        "c: değişiklikler · f: issue çöz · H: geçmiş · i: ağ · o: portlar · t: başlat/durdur · u: anlık görüntüler · "
+        "c: değişiklikler · f: issue çöz · H: geçmiş · i: ağ · o: portlar · v: ekran · t: başlat/durdur · u: anlık görüntüler · "
         "Y: sormadan · m: telefon · L: dil · q: çık[/]",
     "Issue": "Issue", "Fix an issue": "Issue çöz", "Test command": "Test komutu",
     "Send a project to {n} first (p): fix works on its GitHub issues.":
@@ -8647,6 +8954,9 @@ TEXTS = {"tr": {
     "notifications on": "bildirimler açık", "notifications off": "bildirimler kapalı",
     "clipboard on": "pano açık", "clipboard off": "pano kapalı",
     "Copied.": "Kopyalandı.",
+    "Screen": "Ekran", "the screen": "ekran",
+    "The screen of {n} is already open.": "{n} ekranı zaten açık.",
+    "Opening the screen of {n}...": "{n} ekranı açılıyor...",
     "Open link": "Linki aç", "No link in this tab.": "Bu sekmede link yok.",
     "Opened in the browser, and copied: {u}": "Tarayıcıda açıldı ve kopyalandı: {u}",
     "Copied (no browser here): {u}": "Kopyalandı (burada tarayıcı yok): {u}",
@@ -10290,7 +10600,8 @@ class VmforaiUI(App):
                     Binding("a", "task", T("Task")), Binding("x", "try", T("Try"), show=False),
                     Binding("p", "project", T("Project")), Binding("c", "changes", T("Changes")),
                     Binding("f", "fix", T("Fix an issue"), show=False),
-                    Binding("o", "ports", T("Ports")), Binding("t", "toggle", T("Start/stop")),
+                    Binding("o", "ports", T("Ports")), Binding("v", "view", T("Screen")),
+                    Binding("t", "toggle", T("Start/stop")),
                     Binding("u", "snapshots", T("Snapshots")), Binding("r", "resize", T("Resources")),
                     Binding("d", "delete", T("Delete")),
                     Binding("ctrl+right_square_bracket", "back_to_tab", T("Tabs"), key_display="^]",
@@ -10375,7 +10686,7 @@ class VmforaiUI(App):
         t.focus()
         self._seen = None
         self.log_line(T("[dim]Enter or l: open · j/k: move · n: new VM · a: task · x: try on copies · p: project · "
-                        "c: changes · f: fix an issue · H: history · i: network · o: ports · t: start/stop · "
+                        "c: changes · f: fix an issue · H: history · i: network · o: ports · v: screen · t: start/stop · "
                         "u: snapshots · Y: yolo · m: phone · L: language · q: quit[/]"))
         self.log_line(T("[dim]Tabs: Ctrl+] list ⇄ last tab · F7/F8 (or Ctrl+PgUp/PgDn) previous/next · "
                         "1 to 9 here: that tab[/]"))
@@ -11162,6 +11473,39 @@ class VmforaiUI(App):
             self.call_from_thread(self.forward_ended, name, p, rc)
         threading.Thread(target=read, daemon=True).start()
 
+    def action_view(self):
+        """v: the VM's desktop, in a VNC viewer or the browser (vmforai view)."""
+        if not (vm := self.need_vm(busy_ok=True)):
+            return
+        n = vm["name"]
+        if any(d == T("the screen") and p.poll() is None for p, d in self.forwards.get(n, [])):
+            self.notify(T("The screen of {n} is already open.", n=n))
+            return
+        self.notify(T("Opening the screen of {n}...", n=n))
+        self.log_line(f"[b]$ vmforai view {n} --keep[/b]")
+        try:
+            p = subprocess.Popen([VMFORAI, "view", n, "--keep"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, text=True, bufsize=1, start_new_session=True)
+        except OSError as e:
+            self.notify(str(e), severity="error")
+            return
+
+        def read():
+            last = ""
+            for line in p.stdout:
+                line = line.rstrip()
+                if not line:
+                    continue
+                last = line
+                self.call_from_thread(self.log_line, line)
+                if line.startswith(f"The screen of {n}"):
+                    self.call_from_thread(self.add_forward, n, p, T("the screen"))
+            rc = p.wait()
+            if rc not in (0, 130, -2):
+                self.call_from_thread(self.notify, last.removeprefix("vmforai: "), severity="error", timeout=10)
+            self.call_from_thread(self.forward_ended, n, p, 0)
+        threading.Thread(target=read, daemon=True).start()
+
     def add_forward(self, name, p, desc):
         self.forwards.setdefault(name, []).append((p, desc))
         self.show_details()
@@ -11529,7 +11873,7 @@ main() {
       if [[ -n ${2-} ]]; then help_cmd "$2"; else usage; fi ;;
     version | -V | --version) say "vmforai $VERSION" ;;
     __mcp-info | __mcp-run | __mcp-get | __mcp-put | __watch | __runwait | __proxy | __phone | __addr) shift; "cmd_$cmd" "$@" ;;
-    add | create | delete | images | prune | mcp | mount | umount | login | setup | connect | shell | start | stop | autostop | snapshot | snapshots | undo | autosnap | idle | notify | clipboard | open | ports | project | changes | take | fix | run | runs | try | tries | net | templates | history | phone | update | deps | tools | yolo | agent | resize | ui | autostart | doctor | list | default | desktop | edit | forget | rm)
+    add | create | delete | images | prune | mcp | mount | umount | login | setup | connect | shell | start | stop | autostop | snapshot | snapshots | undo | autosnap | idle | notify | clipboard | open | view | ports | project | changes | take | fix | run | runs | try | tries | net | templates | history | phone | update | deps | tools | yolo | agent | resize | ui | autostart | doctor | list | default | desktop | edit | forget | rm)
       shift
       if wants_help "$cmd" "$@"; then help_cmd "$cmd"; return 0; fi
       "cmd_$cmd" "$@" ;;

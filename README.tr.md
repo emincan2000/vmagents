@@ -64,12 +64,13 @@ Ya da her şeyi **terminal arayüzünden** yap: `vmforai ui`
 | **Güvenle sormadan çalışma** | `vmforai yolo dev on`: asistanlar önce sormadan çalışır. Kendi bilgisayarında riskli; VM'de `undo` hepsini geri alır. |
 | **Issue'dan pull request'e** | `vmforai fix dev 42 --test "npm test"`: asistan VM'de 42 numaralı GitHub issue'su üzerinde çalışır, testler orada çalışır (geçmezlerse çıktıları asistana geri gider), geçince bir pull request açılır. |
 | **Projen, dal olarak geri** | `vmforai project` bir git deposunu VM'e gönderir, `vmforai take` asistanların işini dal ya da pull request olarak geri getirir. VM'de GitHub anahtarı gerekmez. |
-| **İstediğin an yeni VM** | `vmforai create` resmî bir bulut imajından libvirt VM'i kurar (Debian 13, Debian 12, Ubuntu 24.04, Arch Linux); `--template node` (python, ml, go, rust ya da kendi şablonun) onu bir iş türüne göre hazırlar. |
+| **İstediğin an yeni VM** | `vmforai create` resmî bir bulut imajından libvirt VM'i kurar (Debian 13, Debian 12, Ubuntu 24.04, Arch Linux); `--template node` (python, ml, go, rust, desktop ya da kendi şablonun) onu bir iş türüne göre hazırlar. |
 | **Geri alma** | Her başlatmadan önce anlık görüntü alınır; `vmforai undo` VM'i oturumdan önceki hâline döndürür. |
 | **Bağlantı kopsa da sürer** | Asistan tmux içinde çalışır. İnternet gitse, tekrar bağlan: aynı oturum. |
 | **İşin bitince kapanır** | Asistandan çıkınca VM kapanır (hâlâ kullanılmıyorsa). Unutulan VM'ler 30 dakika boşta kalınca kendini kapatır. |
 | **Bildirimler** | Claude VM'de izin istediğinde ya da seni beklediğinde masaüstü bildirimi. |
 | **VM'deki sunucu tarayıcında** | `vmforai open dev 3000`, VM'in 3000 portunu buradaki bir port yapar. |
+| **Asistan isterse masaüstü** | `vmforai tools dev desktop` (ya da `--template desktop`) VM'e XFCE ve Firefox kurar; asistanlar orada GUI uygulamaları ve tarayıcı açabilir, `vmforai view dev` (arayüzde `v`) ekranını burada, bir pencerede ya da tarayıcında gösterir. |
 | **Claude'un geçmiş oturumları** | `vmforai history dev` Claude Code'un VM'deki konuşmalarını listeler, birini okunur biçimde gösterir; `--resume` onu sürdürür. |
 | **Ortak pano** | Claude'un (ya da senin tmux'ta) VM'de kopyaladığı metin senin panona gelir. |
 | **Beş asistan** | Claude Code, Codex, Gemini CLI, OpenCode, aider; ilk kullanımda kurulur. |
@@ -241,6 +242,7 @@ dilini değiştirir (English / Türkçe) ve seçim hatırlanır.
 | `f` | projenin bir GitHub issue'sunu çöz: numarası ve test komutu, sonra bir sekmede izlenir |
 | `u` | anlık görüntüler: birine dön, ad ve etiketle yenisini al, etiketini değiştir, sil |
 | `o` | portlar: şimdi yönlendir (`o` tekrar: durdur), her bağlantıda, ya da ağındaki cihazlara da |
+| `v` | VM'in masaüstü (`vmforai view`) |
 | `t` / `r` | başlat ya da durdur / RAM ve işlemci (önce VM'i kapatır) |
 | `d` | sil (adını yazarak onaylanır; vmforai ile kurulmamış VM'lerin yalnızca profili kalkar) |
 | `L` | dil: English, Türkçe (hatırlanır) |
@@ -531,6 +533,23 @@ Bu bir SSH port yönlendirmesidir: sunucu yalnızca VM'in `localhost`'unu
 dinlese de, VM başka yerde olsa da çalışır. Burada dolu olan port bir
 sonrakine kayar. `Ctrl-C` ile biter; sonra VM başka bir şey kullanmıyorsa kapanır.
 
+### VM'in masaüstü
+
+```sh
+vmforai tools dev desktop    # VM'e XFCE ve Firefox (1 GB kadar)
+vmforai view dev             # ekranı burada: bir VNC görüntüleyicide ya da tarayıcında
+vmforai view dev --browser   # görüntüleyici olsa da tarayıcıda
+```
+
+Asistanın ekransız yapamadıkları için: bir GUI uygulaması, kendi kullandığı
+bir tarayıcı, tıklayışlarını izlemek istediğin bir sayfa. Masaüstü VM'deki
+VNC ekranı `:1`'dir ve ona yalnızca VM'in kendisi ulaşabilir; VM ile birlikte
+başlar, oradaki asistanlar `DISPLAY=:1` alır. `view` onu SSH ile buraya
+getirir ve `remote-viewer`'da (`sudo apt install virt-viewer`) ya da
+TigerVNC'nin `vncviewer`'ında, onlar yoksa tarayıcında (noVNC) açar. Pencereyi
+kapatınca biter. Masaüstüyle yeni bir VM: `vmforai create dev --template
+desktop`. Arayüzde: `v`.
+
 ### Pano
 
 Bir Linux VM'inin tmux oturumuna bağlıyken tmux'un yapıştırma tamponuna düşen
@@ -592,7 +611,8 @@ vmforai prune                                        # kullanılmayan imajların
 **Şablonlar** VM'i bir iş türüne göre hazırlar: `vmforai create api --template
 node` ona Node.js, npm ve derleme araçlarını kurar, 3000 ve 5173 portlarını
 açar. Hazır olanlar: `node`, `python`, `ml` (daha çok RAM, işlemci ve disk,
-Jupyter portu), `go`, `rust`; `vmforai templates` listeler. Seçenekler
+Jupyter portu), `go`, `rust`, `desktop` (XFCE ve Firefox, aşağıda);
+`vmforai templates` listeler. Seçenekler
 şablonun ayarlarını değiştirir (`--memory 8192`). Paket adları dağıtımın
 kendisinindir (derleme araçları Debian'da `build-essential`, Arch'ta
 `base-devel`). Kendi şablonun: `~/.config/vmforai/templates/AD.conf` içinde
@@ -767,6 +787,7 @@ vmforai take AD [--branch DAL] [--pr]   o iş burada dal olarak (ya da pull requ
 vmforai fix AD ISSUE [--test KOMUT] [--tries N] [--no-pr] [--draft]   issue'dan pull request'e
 
 vmforai open [AD] [PORT...]     VM'in portu burada, tarayıcında ([YEREL:]PORT; --lan)
+vmforai view [AD]               VM'in masaüstü burada (--browser; tools AD desktop ekler)
 vmforai ports AD 3000,5173      her bağlantıda yönlendirilen portlar (off: hiçbiri)
 vmforai phone [--lan] [--new] [--port N] | phone off   telefonda VM'lerin: okutulacak bir QR kod
 vmforai phone notify [off|test] [--server URL] [--token T]   telefona bildirimler (ntfy)

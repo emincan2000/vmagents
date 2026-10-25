@@ -64,12 +64,13 @@ Or do it all from the **terminal UI**, `vmforai ui`:
 | **Yolo, safely** | `vmforai yolo dev on`: agents act without asking first. On your computer that is risky; in a VM, `undo` takes it all back. |
 | **From an issue to a pull request** | `vmforai fix dev 42 --test "npm test"`: the agent works on GitHub issue 42 in the VM, the tests run there (their output goes back to the agent when they fail), and a pull request opens when they pass. |
 | **Your project, back as a branch** | `vmforai project` sends a git repository to the VM, `vmforai take` brings the agents' work back as a branch or pull request. No GitHub keys on the VM. |
-| **New VMs on demand** | `vmforai create` builds a libvirt VM from an official cloud image (Debian 13, Debian 12, Ubuntu 24.04, Arch Linux); `--template node` (python, ml, go, rust, your own) sets it up for a kind of work. |
+| **New VMs on demand** | `vmforai create` builds a libvirt VM from an official cloud image (Debian 13, Debian 12, Ubuntu 24.04, Arch Linux); `--template node` (python, ml, go, rust, desktop, your own) sets it up for a kind of work. |
 | **Undo** | Every start takes a snapshot first; `vmforai undo` puts the VM back to before the session. |
 | **Sessions survive disconnects** | The agent runs in tmux. Lose Wi-Fi, connect again: same session. |
 | **Shuts down when you are done** | Quit the agent and the VM powers off, unless something still uses it. Forgotten VMs shut themselves down after 30 idle minutes. |
 | **Notifications** | A desktop notification when Claude on the VM asks for permission or waits for you. |
 | **The VM's server in your browser** | `vmforai open dev 3000` makes the VM's port 3000 a port here. |
+| **A desktop, when an agent needs one** | `vmforai tools dev desktop` (or `--template desktop`) gives the VM XFCE and Firefox; the agents can open GUI apps and browsers there, and `vmforai view dev` (`v` in the UI) shows its screen here, in a window or your browser. |
 | **Claude's past sessions** | `vmforai history dev` lists Claude Code's conversations on the VM, shows one readable, and `--resume` goes on with it. |
 | **Shared clipboard** | What Claude (or you, in tmux) copies on the VM lands in your clipboard. |
 | **Five agents** | Claude Code, Codex, Gemini CLI, OpenCode, aider; installed on first use. |
@@ -238,6 +239,7 @@ Vim keys too (`j`/`k` move, `l` or Enter open, `h` or Esc back).
 | `f` | fix a GitHub issue of the project: its number and the test command, then followed in a tab |
 | `u` | snapshots: go back to one, take one with a name and a label, relabel, delete |
 | `o` | ports: forward now (`o` again stops), every time you connect, or to your LAN too |
+| `v` | the VM's desktop (`vmforai view`) |
 | `t` / `r` | start or stop / RAM and CPUs (shuts the VM down first) |
 | `d` | delete (type the name to confirm; VMs not made by vmforai lose only their profile) |
 | `L` | language: English, Türkçe (remembered) |
@@ -531,6 +533,22 @@ An SSH port forward: it works when the server listens only on the VM's
 `localhost`, and for VMs elsewhere. A port taken here moves to the next free
 one. `Ctrl-C` ends it, then the VM shuts down if nothing else uses it.
 
+### The VM's desktop
+
+```sh
+vmforai tools dev desktop    # XFCE and Firefox on the VM (about 1 GB)
+vmforai view dev             # its screen here: in a VNC viewer, or in your browser
+vmforai view dev --browser   # the browser even with a viewer
+```
+
+For what an agent cannot do without a screen: a GUI app, a browser it drives,
+a page you want to watch it click through. The desktop is VNC display `:1`
+on the VM, which only the VM itself can reach; it starts with the VM, and the
+agents there get `DISPLAY=:1`. `view` brings it here over SSH and opens it in
+`remote-viewer` (`sudo apt install virt-viewer`) or TigerVNC's `vncviewer`,
+or without them in your browser (noVNC). Closing the window ends it. A new VM
+with it: `vmforai create dev --template desktop`. In the UI: `v`.
+
 ### Clipboard
 
 While you are connected to a Linux VM's tmux session, what lands in a tmux
@@ -591,7 +609,7 @@ vmforai prune                                        # free the space of unused 
 **Templates** set up a VM for a kind of work: `vmforai create api --template
 node` gives it Node.js, npm and build tools, ports 3000 and 5173. Built in:
 `node`, `python`, `ml` (more RAM, CPUs and disk, Jupyter's port), `go`,
-`rust`; `vmforai templates` lists them. Options change what a template
+`rust`, `desktop` (XFCE and Firefox, see below); `vmforai templates` lists them. Options change what a template
 sets (`--memory 8192`). Package names are the distribution's own (build
 tools are `build-essential` on Debian, `base-devel` on Arch). Your own:
 `~/.config/vmforai/templates/NAME.conf` with `IMAGE=`, `MEMORY=`, `CPUS=`,
@@ -767,6 +785,7 @@ vmforai take NAME [--branch B] [--pr]   that work as a branch here (or a pull re
 vmforai fix NAME ISSUE [--test CMD] [--tries N] [--no-pr] [--draft]   an issue to a pull request
 
 vmforai open [NAME] [PORT...]   the VM's port here, in your browser ([LOCAL:]PORT; --lan)
+vmforai view [NAME]             the VM's desktop here (--browser; tools NAME desktop adds one)
 vmforai ports NAME 3000,5173    ports forwarded each time you connect (off: none)
 vmforai phone [--lan] [--new] [--port N] | phone off   your VMs on the phone: a QR code to scan
 vmforai phone notify [off|test] [--server URL] [--token T]   notifications on the phone (ntfy)
