@@ -56,7 +56,10 @@ class DesktopToolTests(Base):
         d = self.sb.remote_home / ".config/vmforai"
         self.assertEqual((d / "display-env").read_text(), "DISPLAY=:1\n")
         self.assertTrue(os.access(d / "desktop.sh", os.X_OK))
-        self.assertIn(":1 -geometry 1600x900 -depth 24 -localhost", (d / "desktop.sh").read_text())
+        script = (d / "desktop.sh").read_text()
+        self.assertIn(":1 -geometry 1600x900 -depth 24 -localhost", script)
+        self.assertIn("DBUS_SESSION_BUS_ADDRESS=unix:path=$b DISPLAY=:1 startxfce4", script)  # systemd's user bus
+        self.assertIn('export PATH="$HOME/.local/bin:$HOME/.opencode/bin:', script)  # the agents, in its terminals
         unit = (self.sb.remote_home / ".config/systemd/user/vmforai-desktop.service").read_text()
         self.assertIn("ExecStart=%h/.config/vmforai/desktop.sh", unit)
 
