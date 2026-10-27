@@ -692,6 +692,24 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIsInstance(self.app.screen, self.ui.Ask)
             self.assertEqual(self.app.terminals("dev"), [])
 
+    async def test_github_repo(self):
+        async with self.start() as pilot:
+            await self.ready(pilot)
+            await pilot.press("G")
+            await pilot.pause(0.3)
+            dialog = self.app.screen
+            self.assertIsInstance(dialog, self.ui.Ask)
+            await self.submit(pilot)
+            await pilot.pause(0.1)
+            self.assertIn("Give the repository", str(dialog.query_one("#error").render()))
+            dialog.query_one("#f-repo").value = "curl/curl"
+            dialog.query_one("#sanitize").value = True
+            await self.submit(pilot)
+            await self.wait_for(pilot, lambda: self.app.terminals("dev"))
+            term = self.app.terminals("dev")[0]
+            self.assertEqual(self.tab_labels(), ["1 VMs", "2 dev · Repository"])
+            await self.wait_for(pilot, lambda: "session: repo dev curl/curl --hold --sanitize" in self.screen_text(term))
+
     async def test_terminal_select_and_copy(self):
         async with self.start() as pilot:
             await self.ready(pilot)

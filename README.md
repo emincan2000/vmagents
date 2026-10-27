@@ -13,7 +13,7 @@
   ![Languages](https://img.shields.io/badge/UI-EN%20%7C%20TR-orange.svg)
   [![test](https://github.com/emincan2000/vmforai/actions/workflows/test.yml/badge.svg)](https://github.com/emincan2000/vmforai/actions/workflows/test.yml)
 
-  [Install](#install) · [Why a VM?](#vmforai-a-container-or-the-cloud) · [Quick start](#quick-start) · [Terminal UI](#terminal-ui) · [Tasks](#tasks-and-yolo-mode) · [Phone](#from-the-phone) · [Projects](#projects) · [Issues](#from-an-issue-to-a-pull-request) · [Commands](#commands) · [Roadmap](ROADMAP.md)
+  [Install](#install) · [Why a VM?](#vmforai-a-container-or-the-cloud) · [Quick start](#quick-start) · [Terminal UI](#terminal-ui) · [Tasks](#tasks-and-yolo-mode) · [Phone](#from-the-phone) · [Projects](#projects) · [Issues](#from-an-issue-to-a-pull-request) · [GitHub repos](#try-someones-github-repository) · [Commands](#commands) · [Roadmap](ROADMAP.md)
 </div>
 
 ---
@@ -64,6 +64,7 @@ Or do it all from the **terminal UI**, `vmforai ui`:
 | **From the phone** | `vmforai phone` shows a QR code: scan it, and the phone's browser lists your VMs, opens their agents in a terminal, gives them tasks and follows them, fixes issues, starts and stops them (over Tailscale, from anywhere). `phone notify`: a notification when a task ends or an agent waits. SSH apps get a port per VM too. |
 | **Yolo, safely** | `vmforai yolo dev on`: agents act without asking first. On your computer that is risky; in a VM, `undo` takes it all back. |
 | **From an issue to a pull request** | `vmforai fix dev 42 --test "npm test"`: the agent works on GitHub issue 42 in the VM, the tests run there (their output goes back to the agent when they fail), and a pull request opens when they pass. |
+| **Someone's GitHub repository, tried safely** | `vmforai repo dev owner/repo`: cloned into the VM, its build system found (CMake, Meson, Cargo, Go, npm, Python, PlatformIO, make, autotools), what it needs installed, then built and tested there, with a short summary. `--sanitize` for C and C++, `--fork` for contributing. |
 | **Your project, back as a branch** | `vmforai project` sends a git repository to the VM, `vmforai take` brings the agents' work back as a branch or pull request. No GitHub keys on the VM. |
 | **New VMs on demand** | `vmforai create` builds a libvirt VM from an official cloud image (Debian 13, Debian 12, Ubuntu 24.04, Arch Linux); `--template node` (python, ml, go, rust, desktop, your own) sets it up for a kind of work. |
 | **Undo** | Every start takes a snapshot first; `vmforai undo` puts the VM back to before the session. |
@@ -238,6 +239,7 @@ Vim keys too (`j`/`k` move, `l` or Enter open, `h` or Esc back).
 | `H` | Claude's past sessions on the VM, in a tab: `j`/`k` through them (shown below), `r` goes on with one |
 | `p` / `c` | send a project (a git repository) / its changes, in a tab (`t` there: take as a branch, `P`: pull request) |
 | `f` | fix a GitHub issue of the project: its number and the test command, then followed in a tab |
+| `G` | try a GitHub repository on the VM (`vmforai repo`): its name, a test command, fork, sanitizers |
 | `u` | snapshots: go back to one, take one with a name and a label, relabel, delete |
 | `o` | ports: forward now (`o` again stops), every time you connect, or to your LAN too |
 | `v` | the VM's desktop (`vmforai view`) |
@@ -462,6 +464,40 @@ vmforai fix dev 42 --test "npm test"
   asking, so when people other than you wrote some of it, `fix` says who and
   asks first (`--yes` skips that).
 - Any agent: `--codex`, `--gemini`, `--opencode`, `--aider`. In the UI: `f`.
+
+## Try someone's GitHub repository
+
+Building and testing someone else's code runs whatever its build scripts and
+tests do. Do it on the VM instead of on your computer:
+
+```sh
+vmforai repo dev owner/repo                 # or its GitHub URL
+vmforai repo dev owner/lib --sanitize       # C and C++ with ASan and UBSan
+vmforai repo dev owner/app --fork --test-cmd "make test-unit"
+vmforai repos dev                           # the clones there, with their last results
+```
+
+It clones the repository into `~/repos` on the VM (50 commits deep, `--depth`;
+`--branch`), or brings that clone up to date, then finds its build system:
+CMake, Meson, Cargo, Go, npm, Python (pyproject.toml or setup.py), PlatformIO,
+make or autotools. What that needs and the VM lacks is installed first, as
+`vmforai tools` does. Then it builds and runs the tests (ctest, meson test,
+cargo test, go test, npm test, pytest, make check...), and ends with a summary:
+
+```
+owner/lib on dev, in ~/repos/lib (cmake): build ok, tests ok (19 passed, 0 failed), 4s.
+Log: ~/.config/vmforai/repos/lib-20261028-013624.log
+```
+
+- With no build system it knows, it shows what the README says about building
+  and leaves the clone for you (`vmforai shell dev`).
+- `--build-only` skips the tests; `--json` prints only the summary, as JSON.
+  The exit code is 0 when it built and no test failed.
+- `--fork` forks it to your GitHub account first (with `gh`, here) and adds that
+  fork as the remote `fork` of the clone. Nothing is pushed: that stays yours.
+  The VM never gets your GitHub token.
+- An agent can work on it there too: `vmforai shell dev`, then `cd ~/repos/lib`
+  and start one. In the UI: `G`.
 
 ## Everyday use
 
@@ -784,6 +820,8 @@ vmforai project NAME [DIR]      send a git repository here to the VM (--discard,
 vmforai changes NAME [--stat]   what the agents changed in it there
 vmforai take NAME [--branch B] [--pr]   that work as a branch here (or a pull request)
 vmforai fix NAME ISSUE [--test CMD] [--tries N] [--no-pr] [--draft]   an issue to a pull request
+vmforai repo NAME OWNER/REPO [--fork] [--sanitize] [--build-only] [--test-cmd CMD]   build and test it on the VM
+vmforai repos NAME              the repositories tried there, with their last results
 
 vmforai open [NAME] [PORT...]   the VM's port here, in your browser ([LOCAL:]PORT; --lan)
 vmforai view [NAME]             the VM's desktop here (--browser; tools NAME desktop adds one)

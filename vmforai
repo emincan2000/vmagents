@@ -19,7 +19,7 @@ if [[ -n ${VMFORAI_HOST_PATH:-} ]]; then
   unset VIRTUAL_ENV VMFORAI_HOST_PATH
 fi
 
-VERSION=0.26.1
+VERSION=0.27.0
 PROG=${0##*/}
 # vmforai was called vmagents (0.11 to 0.24) and vmclaude before that: their
 # settings in the environment (VMAGENTS_..., VMCLAUDE_...) still count.
@@ -108,6 +108,7 @@ GET STARTED
     vmforai changes dev                     what the agents changed there
     vmforai take dev                        that work as the branch vmforai/dev here (--pr: a pull request)
     vmforai fix dev 42 --test "npm test"    GitHub issue 42 done there; a pull request when the tests pass
+    vmforai repo dev owner/repo             someone's GitHub repository, built and tested in the VM
     ssh dev@VM                               any SSH app opens Claude too (after setup)
 
   From the phone:
@@ -159,6 +160,10 @@ COMMANDS
     changes NAME         what the agents changed since (commits, and what is not committed)
     take NAME            that work as a branch here (vmforai/NAME); --pr opens a pull request
     fix NAME ISSUE       an agent works on a GitHub issue; the tests run; they pass: a pull request
+
+  GitHub repositories (someone else's code, built and tested on the VM, not here):
+    repo NAME OWNER/REPO clone it into ~/repos, find its build system, build and test it (--fork, --sanitize)
+    repos NAME           the clones on the VM, with their last result
 
   Undo (libvirt):
     undo NAME [SNAPSHOT] put the VM back to how it was before this session
@@ -944,6 +949,51 @@ VM that was not taken back stops it (--discard: set it aside on the VM).
 Examples:
   vmforai fix dev 42 --test "npm test"
   vmforai fix dev https://github.com/me/app/issues/42 --codex --draft
+EOF
+      ;;
+    repo) cat <<EOF
+vmforai repo NAME OWNER/REPO [--branch B] [--depth N] [--fork] [--build-only]
+                             [--sanitize] [--test-cmd CMD] [--json]
+
+Tries a GitHub repository on the VM, not on this computer: someone else's
+code builds and runs its tests there, where it can do no harm (and undo
+takes it all back). OWNER/REPO, or its GitHub URL:
+  1. clones it into ~/repos/REPO on the VM (--depth 50 commits, or N;
+     --branch B), or brings that clone up to date (fast-forward only)
+  2. finds its build system: CMake, Meson, Cargo, Go, npm, Python
+     (pyproject.toml or setup.py), PlatformIO, make or autotools, in that
+     order. None of these: it shows what the README says about building
+  3. installs what that needs and the VM lacks (as "vmforai tools" does)
+  4. builds it, then runs its tests (ctest, meson test, cargo test, go test,
+     npm test, pytest, pio test -e native, make check or make test)
+
+It ends with a summary: the build system, build and tests ok or not, how
+many tests passed and failed, the time. The whole output is kept here, in
+${CONF_DIR/#$HOME/\~}/repos/.
+
+  --test-cmd CMD   run CMD on the VM, in the clone, instead of the tests
+  --build-only     build, do not test
+  --sanitize       C and C++ with -fsanitize=address,undefined (in its own
+                   build folder, build-vmforai-asan)
+  --fork           fork it to your GitHub account first (with gh, here) and
+                   add that fork as the remote "fork" of the clone. Nothing
+                   is pushed: that stays yours to do (vmforai shell NAME)
+  --json           only the summary, as JSON (the output goes to the log)
+
+The exit code is 0 when it built and no test failed. The VM never gets your
+GitHub token. "vmforai repos NAME" lists the clones and their last results.
+
+Examples:
+  vmforai repo dev curl/curl --build-only
+  vmforai repo dev https://github.com/owner/lib --sanitize
+  vmforai repo dev owner/app --fork --test-cmd "make test-unit"
+EOF
+      ;;
+    repos) cat <<EOF
+vmforai repos NAME
+
+The repositories "vmforai repo" cloned into ~/repos on the VM, each with
+its build system, whether it built, its tests and when it was last tried.
 EOF
       ;;
     take) cat <<EOF
@@ -6624,6 +6674,8 @@ tool_pkgs() {
     dnf:java) echo java-latest-openjdk-devel ;;
     zypper:java) echo java-devel ;;
     apk:java) echo openjdk21 ;;
+    apt:ninja | dnf:ninja) echo ninja-build ;;
+    *:autotools) echo autoconf automake libtool ;;
     apt:desktop) echo xfce4 xfce4-terminal dbus-x11 tigervnc-standalone-server \
       "$(. /etc/os-release 2>/dev/null; [ "${ID:-}" = ubuntu ] && echo firefox || echo firefox-esr)" ;;
     pacman:desktop) echo xfce4 tigervnc firefox ;;
@@ -6632,6 +6684,25 @@ tool_pkgs() {
     apk:desktop) echo xfce4 xfce4-terminal dbus-x11 tigervnc firefox ;;
     *) echo "$2" ;;
   esac
+}
+tools_install() { # TOOL...: their packages; rust from rustup
+  list_= rust_= m_=$(pkg_manager)
+  for p_ in "$@"; do
+    case $p_ in
+      rust) rust_=1 list_="$list_ $(tool_pkgs "$m_" build)" ;;  # (crates want a C compiler)
+      *) list_="$list_ $(tool_pkgs "$m_" "$p_")" ;;
+    esac
+  done
+  if [ -n "$list_" ]; then
+    # shellcheck disable=SC2086
+    pkg $list_ || return 1
+  fi
+  if [ -n "$rust_" ] && ! command -v cargo >/dev/null 2>&1 && ! [ -x "$HOME/.cargo/bin/cargo" ]; then
+    echo "Installing Rust (rustup, stable)..."
+    curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null || return 1
+    echo "Installed $("$HOME/.cargo/bin/rustc" --version)"
+  fi
+  return 0
 }
 '
 TOOLS_KNOWN="node python go rust java build desktop"
@@ -6696,25 +6767,8 @@ EOF
 # On the VM: tools (above), then a command ($1, or empty; a template's SETUP).
 # shellcheck disable=SC2016
 TEMPLATE_SH=$REMOTE_ENV$PKG_SH$TOOL_PKGS_SH$DESKTOP_SETUP_SH'setup=$1; shift
-list= rust= desktop=
-m=$(pkg_manager)
-for p in "$@"; do
-  case $p in
-    rust) rust=1 list="$list $(tool_pkgs "$m" build)" ;;  # (crates want a C compiler)
-    desktop) desktop=1 list="$list $(tool_pkgs "$m" desktop)" ;;
-    *) list="$list $(tool_pkgs "$m" "$p")" ;;
-  esac
-done
-if [ -n "$list" ]; then
-  # shellcheck disable=SC2086
-  pkg $list || exit 1
-fi
-if [ -n "$rust" ] && ! command -v cargo >/dev/null 2>&1 && ! [ -x "$HOME/.cargo/bin/cargo" ]; then
-  echo "Installing Rust (rustup, stable)..."
-  curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null || exit 1
-  echo "Installed $("$HOME/.cargo/bin/rustc" --version)"
-fi
-if [ -n "$desktop" ]; then
+tools_install "$@" || exit 1
+if case " $* " in *" desktop "*) true ;; *) false ;; esac; then
   desktop_setup || { echo "vmforai: setting up the desktop failed" >&2; exit 1; }
 fi
 if [ -n "$setup" ]; then
@@ -6805,6 +6859,277 @@ cmd_tools() {
   project_done
   ((rc == 0)) || die "installing them on $NAME failed (see above)"
   say "Done: ${tools[*]} on $NAME."
+}
+
+# A GitHub repository, tried on the VM: cloned into ~/repos/DIR (or brought
+# up to date), its build system found, what it needs installed, then built
+# and tested. $1 URL, $2 DIR, $3 branch, $4 depth, $5 the fork's URL (a
+# remote "fork"), $6 1: build only, $7 1: sanitizers, $8 a test command.
+# The result goes to .git/vmforai-last (repos lists it). Exit 3: no build
+# system known; 4: DIR is a clone of another repository.
+# shellcheck disable=SC2016
+REPO_SH=$REMOTE_ENV$PKG_SH$TOOL_PKGS_SH'url=$1 r=$2 d=$HOME/repos/$2 branch=$3 depth=$4 fork=$5 only=$6 san=$7 tcmd=$8
+command -v git >/dev/null 2>&1 || pkg git || exit 1
+if [ -d "$d/.git" ]; then
+  o=$(git -C "$d" config --get remote.origin.url)
+  [ "$o" = "$url" ] || { echo "vmforai: ~/repos/$r is a clone of ${o:-another repository}, not $url" >&2; exit 4; }
+  echo "Updating ~/repos/$r..."
+  if [ -n "$branch" ]; then
+    git -C "$d" fetch -q --depth "$depth" origin "$branch" &&
+      { git -C "$d" checkout -q "$branch" 2>/dev/null || git -C "$d" checkout -q -b "$branch" FETCH_HEAD; } &&
+      git -C "$d" merge -q --ff-only FETCH_HEAD
+  else
+    git -C "$d" pull -q --ff-only
+  fi || { echo "vmforai: could not update ~/repos/$r (changes there? git -C ~/repos/$r status)" >&2; exit 1; }
+else
+  mkdir -p "$HOME/repos" || exit 1
+  echo "Cloning $url into ~/repos/$r..."
+  if [ -n "$branch" ]; then git clone -q --depth "$depth" --branch "$branch" "$url" "$d"
+  else git clone -q --depth "$depth" "$url" "$d"
+  fi || exit 1
+fi
+if [ -n "$fork" ]; then
+  git -C "$d" remote set-url fork "$fork" 2>/dev/null || git -C "$d" remote add fork "$fork" || exit 1
+  echo "The remote \"fork\" is $fork."
+fi
+cd "$d" || exit 1
+if [ -f CMakeLists.txt ]; then s=cmake
+elif [ -f meson.build ]; then s=meson
+elif [ -f Cargo.toml ]; then s=cargo
+elif [ -f go.mod ]; then s=go
+elif [ -f package.json ]; then s=npm
+elif [ -f pyproject.toml ] || [ -f setup.py ]; then s=python
+elif [ -f platformio.ini ]; then s=platformio
+elif [ -f Makefile ] || [ -f makefile ] || [ -f GNUmakefile ]; then s=make
+elif [ -f configure ] || [ -f configure.ac ] || [ -f autogen.sh ]; then s=autotools
+else
+  echo "vmforai: no build system vmforai knows in ~/repos/$r (CMake, Meson, Cargo, Go, npm, Python, PlatformIO, make, autotools)." >&2
+  for f in README.md README.rst README readme.md; do
+    [ -f "$f" ] || continue
+    echo "What its $f says about building:" >&2
+    awk '\''/^#/ { on = tolower($0) ~ /build|compil|install/ } on && n < 40 { print; n++ }'\'' "$f" >&2
+    break
+  done
+  exit 3
+fi
+echo "Build system: $s"
+have() { command -v "$1" >/dev/null 2>&1; }
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+need=
+case $s in
+  cmake | meson | make | autotools) have cc && have make || need="$need build" ;;
+esac
+case $s in
+  cmake) have cmake || need="$need cmake"; have ninja || need="$need ninja" ;;
+  meson) have meson || need="$need meson"; have ninja || need="$need ninja" ;;
+  autotools) have autoreconf || need="$need autotools" ;;
+  cargo) have cargo || need="$need rust" ;;
+  go) have go || need="$need go" ;;
+  npm) have npm || need="$need node" ;;
+  python | platformio) have python3 && python3 -m venv -h >/dev/null 2>&1 || need="$need python" ;;
+esac
+if [ -n "$need" ]; then
+  echo "Installing what it needs:$need"
+  # shellcheck disable=SC2086
+  tools_install $need || exit 1
+  [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+fi
+b=build-vmforai
+if [ "$san" = 1 ]; then
+  b=build-vmforai-asan f="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+  CFLAGS=$f CXXFLAGS=$f LDFLAGS="-fsanitize=address,undefined"
+  export CFLAGS CXXFLAGS LDFLAGS
+fi
+j=$(nproc 2>/dev/null || echo 2)
+step() { echo "+ $*"; "$@"; }
+venv() { { [ -d .venv-vmforai ] || step python3 -m venv .venv-vmforai; } && . .venv-vmforai/bin/activate; }
+pydeps() { # what the tests need: a dependency group, or a requirements file
+  if grep -q "^\[dependency-groups\]" pyproject.toml 2>/dev/null; then
+    for g in tests test; do
+      if grep -q "^$g *= *\[" pyproject.toml; then step pip install -q --group "$g" || return 1; fi
+    done
+  fi
+  for f in requirements-test.txt requirements-tests.txt test-requirements.txt requirements/tests.txt requirements/test.txt \
+    requirements-dev.txt; do
+    if [ -f "$f" ]; then step pip install -q -r "$f" || return 1; fi
+  done
+}
+build() {
+  case $s in
+    cmake) step cmake -S . -B "$b" -G Ninja && step cmake --build "$b" ;;
+    meson) { [ -d "$b" ] || step meson setup "$b"; } && step meson compile -C "$b" ;;
+    cargo) step cargo build ;;
+    go) step go build ./... ;;
+    npm) { if [ -f package-lock.json ]; then step npm ci; else step npm install; fi; } && step npm run build --if-present ;;
+    python) venv && { step pip install -q -e ".[test,tests]" || step pip install -q -e .; } && pydeps ;;
+    platformio) venv && { have pio || step pip install -q platformio; } && step pio run ;;
+    make) step make -j"$j" ;;
+    autotools)
+      if [ ! -f configure ]; then
+        if [ -x autogen.sh ]; then step ./autogen.sh; else step autoreconf -fi; fi || return 1
+      fi
+      step ./configure && step make -j"$j" ;;
+  esac
+}
+tests() { # 5: none to run
+  [ -n "$tcmd" ] && { step sh -c "$tcmd"; return; }
+  case $s in
+    cmake) step ctest --test-dir "$b" --output-on-failure ;;
+    meson) step meson test -C "$b" ;;
+    cargo) step cargo test ;;
+    go) step go test ./... ;;
+    npm) step npm test ;;
+    python) { have pytest || step pip install -q pytest; } && step python -m pytest ;;
+    platformio) grep -q "^\[env:native\]" platformio.ini || return 5; step pio test -e native ;;
+    make | autotools)
+      if make -n check >/dev/null 2>&1; then step make check
+      elif make -n test >/dev/null 2>&1; then step make test
+      else return 5
+      fi ;;
+  esac
+}
+t0=$(date +%s) out=$d/.git/vmforai-output st=$d/.git/vmforai-status
+{
+  bs=ok ts=skip
+  if ! build; then bs=fail
+  elif [ "$only" != 1 ]; then
+    tests; rc_=$?
+    case $rc_ in 0) ts=ok ;; 5) ts=none ;; *) ts=fail ;; esac
+  fi
+  echo "$bs $ts" >"$st"
+} 2>&1 | tee "$out"
+read -r bs ts <"$st"
+# Tests passed and failed, from what the usual runners print (ctest, cargo,
+# pytest, meson, go packages, jest, mocha, node --test); "-" when none of them said.
+n=$(awk '\''
+  /% tests passed.* out of [0-9]+$/ { f = 0; for (i = 2; i <= NF; i++) if ($i == "failed") f = $(i - 2); p += $NF - f; q += f; next }
+  /^test result:|^=+ .* in [0-9.]+s|^Tests:|^ *[0-9]+ (passing|failing)/ {
+    for (i = 2; i <= NF; i++) { w = $i; sub(/[,;]$/, "", w)
+      if (w == "passed" || w == "passing") p += $(i - 1); else if (w == "failed" || w == "failing") q += $(i - 1) }
+  }
+  /^Ok:/ { p += $2 } /^Fail:/ { q += $2 }
+  /^ok +\t/ { p++ } /^FAIL\t/ { q++ }
+  /^# pass [0-9]/ { p += $3 } /^# fail [0-9]/ { q += $3 }
+  END { if (p + q) print p + 0, q + 0; else print "- -" }'\'' "$out")
+printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$s" "$bs" "$ts" "$(echo "$n" | tr " " "\t")" "$(($(date +%s) - t0))" \
+  "$(date +%s)" >"$d/.git/vmforai-last"
+exit 0
+'
+
+# The clones on the VM, each with its last result: DIR, origin, then the
+# fields of .git/vmforai-last (when it was tried).
+# shellcheck disable=SC2016
+REPOS_SH='for g in "$HOME"/repos/*/.git; do
+  [ -d "$g" ] || continue
+  d=${g%/.git}
+  printf "%s\t%s\t%s\n" "${d##*/}" "$(git -C "$d" config --get remote.origin.url)" "$(cat "$g/vmforai-last" 2>/dev/null)"
+done
+'
+
+cmd_repo() {
+  local name='' repo='' branch='' depth=50 fork=0 only=0 san=0 tcmd='' json=0 owner r url forkurl='' me log rc=0 res
+  while (($#)); do
+    case $1 in
+      --branch) (($# >= 2)) || usage_error "repo: --branch needs a name"; branch=$2; shift ;;
+      --depth)
+        if (($# < 2)) || ! [[ $2 =~ ^[1-9][0-9]*$ ]]; then usage_error "repo: --depth takes a number"; fi
+        depth=$2; shift ;;
+      --fork) fork=1 ;;
+      --build-only) only=1 ;;
+      --sanitize) san=1 ;;
+      --test-cmd) (($# >= 2)) || usage_error "repo: --test-cmd needs a command"; tcmd=$2; shift ;;
+      --json) json=1 ;;
+      --hold) HOLD=1 ;;
+      -*) usage_error "repo: unknown option $1" ;;
+      *)
+        if [[ -z $name ]]; then name=$1
+        elif [[ -z $repo ]]; then repo=$1
+        else usage_error "repo: too many arguments"
+        fi ;;
+    esac
+    shift
+  done
+  [[ -n $name ]] || usage_error "repo: missing NAME"
+  [[ -n $repo ]] || usage_error "repo: which repository? e.g. $PROG repo $name owner/repo"
+  repo=${repo#https://github.com/} repo=${repo#github.com/} repo=${repo%/} repo=${repo%.git}
+  [[ $repo =~ ^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$ ]] || usage_error "repo: not OWNER/REPO (or its GitHub URL): $repo"
+  owner=${BASH_REMATCH[1]} r=${BASH_REMATCH[2]}
+  [[ -z $branch ]] || git check-ref-format --branch "$branch" >/dev/null 2>&1 || usage_error "repo: not a valid branch name: $branch"
+  load "$name"
+  [[ $C_OS != windows ]] || die "repo works with Linux VMs only"
+  url=https://github.com/$owner/$r.git
+  if ((fork)); then
+    # Only with --fork: it leaves a repository in your GitHub account.
+    command -v gh >/dev/null || die "--fork needs the GitHub CLI (gh) on this computer: https://cli.github.com"
+    me=$(gh api user --jq .login 2>/dev/null) || die "gh is not logged in: gh auth login"
+    info "Forking $owner/$r to $me/$r on GitHub..."
+    gh repo fork "$owner/$r" --clone=false >&2 || die "gh could not fork $owner/$r"
+    forkurl=https://github.com/$me/$r.git
+  fi
+  mkdir -p "$CONF_DIR/repos"
+  log=$CONF_DIR/repos/$r-$(date +%Y%m%d-%H%M%S).log
+  project_connect
+  if ((json)); then
+    run_ssh -T -- "$TARGET" "$(remote_cmd "$REPO_SH" "$url" "$r" "$branch" "$depth" "$forkurl" "$only" "$san" "$tcmd")" \
+      </dev/null >"$log" 2>&1 || rc=$?
+  else
+    run_ssh "$TTY_FLAG" -- "$TARGET" "$(remote_cmd "$REPO_SH" "$url" "$r" "$branch" "$depth" "$forkurl" "$only" "$san" "$tcmd")" \
+      2>&1 | tee "$log" || rc=${PIPESTATUS[0]}
+  fi
+  sed -i 's/\r$//' "$log"
+  # shellcheck disable=SC2016 # the VM's $HOME
+  ((rc)) || res=$(run_ssh -T -- "$TARGET" "$(remote_cmd 'cat "$HOME/repos/$1/.git/vmforai-last"' "$r")" </dev/null) || rc=1
+  project_done
+  case $rc in
+    0) ;;
+    3) die "$owner/$r is on $NAME in ~/repos/$r, but how to build it is up to you (see above; log: $log)" ;;
+    *) die "trying $owner/$r on $NAME failed (exit code $rc; log: $log)" ;;
+  esac
+  local sys bs ts np nf secs when
+  IFS=$'\t' read -r sys bs ts np nf secs when <<<"$res"
+  if ((json)); then
+    # shellcheck disable=SC2088 # a literal "~/" (the VM's home)
+    printf '{"vm": %s, "repo": %s, "dir": %s, "system": %s, "build": %s, "tests": %s, "passed": %s, "failed": %s, "seconds": %s, "log": %s, "fork": %s}\n' \
+      "$(json_str "$NAME")" "$(json_str "$owner/$r")" "$(json_str "~/repos/$r")" "$(json_str "$sys")" "$(json_str "$bs")" \
+      "$(json_str "$ts")" "${np/-/null}" "${nf/-/null}" "$((10#$secs))" "$(json_str "$log")" \
+      "$([[ -n $forkurl ]] && json_str "$forkurl" || printf null)"
+  else
+    local counts=''
+    [[ $np == - ]] || counts=" ($np passed, $nf failed)"
+    say ""
+    say "$owner/$r on $NAME, in ~/repos/$r ($sys): build $bs, tests $ts$counts, ${secs}s."
+    say "Log: $log"
+    [[ -z $forkurl ]] || say "Your fork is the remote \"fork\" there; pushing is yours: $PROG shell $NAME"
+  fi
+  [[ $bs == ok && $ts != fail ]] || { hold_prompt; exit 1; }
+  hold_prompt
+}
+
+cmd_repos() {
+  local name='' rows d o sys bs ts np nf secs when
+  while (($#)); do
+    case $1 in
+      -*) usage_error "repos: unknown option $1" ;;
+      *) [[ -z $name ]] || usage_error "repos: too many arguments"; name=$1 ;;
+    esac
+    shift
+  done
+  [[ -n $name ]] || usage_error "repos: missing NAME"
+  load "$name"
+  [[ $C_OS != windows ]] || die "repo works with Linux VMs only"
+  project_connect
+  rows=$(run_ssh -T -- "$TARGET" "$(remote_cmd "$REPOS_SH")" </dev/null) || { project_done; die "could not list the clones on $NAME"; }
+  project_done
+  if [[ -z $rows ]]; then
+    say "No repositories on $NAME yet; try one: $PROG repo $NAME owner/repo"
+    return 0
+  fi
+  printf '%-20s %-10s %-6s %-14s %-16s %s\n' REPO SYSTEM BUILD TESTS TRIED ORIGIN
+  while IFS=$'\t' read -r d o sys bs ts np nf secs when; do
+    [[ -z $np || $np == - ]] || ts+=" $np/$((np + nf))"
+    [[ ! $when =~ ^[0-9]+$ ]] || printf -v when '%(%Y-%m-%d %H:%M)T' "$when"
+    printf '%-20s %-10s %-6s %-14s %-16s %s\n' "$d" "${sys:--}" "${bs:--}" "${ts:--}" "${when:--}" "${o#https://github.com/}"
+  done <<<"$rows"
 }
 
 cmd_templates() {
@@ -8912,10 +9237,10 @@ TEXTS = {"tr": {
     "working": "işlem sürüyor",
     "{n} VM": "{n} VM", "{n} VMs": "{n} VM", "no VMs yet: press n": "henüz VM yok: n'ye bas",
     "[dim]Enter or l: open · j/k: move · n: new VM · a: task · x: try on copies · p: project · c: changes · "
-    "f: fix an issue · H: history · i: network · o: ports · v: screen · t: start/stop · u: snapshots · Y: yolo · m: phone · "
+    "f: fix an issue · G: GitHub repo · H: history · i: network · o: ports · v: screen · t: start/stop · u: snapshots · Y: yolo · m: phone · "
     "L: language · q: quit[/]":
         "[dim]Enter ya da l: aç · j/k: gezin · n: yeni VM · a: görev · x: kopyalarda dene · p: proje · "
-        "c: değişiklikler · f: issue çöz · H: geçmiş · i: ağ · o: portlar · v: ekran · t: başlat/durdur · u: anlık görüntüler · "
+        "c: değişiklikler · f: issue çöz · G: GitHub reposu · H: geçmiş · i: ağ · o: portlar · v: ekran · t: başlat/durdur · u: anlık görüntüler · "
         "Y: sormadan · m: telefon · L: dil · q: çık[/]",
     "Issue": "Issue", "Fix an issue": "Issue çöz", "Test command": "Test komutu",
     "Send a project to {n} first (p): fix works on its GitHub issues.":
@@ -8964,6 +9289,17 @@ TEXTS = {"tr": {
     "clipboard on": "pano açık", "clipboard off": "pano kapalı",
     "Copied.": "Kopyalandı.",
     "Screen": "Ekran", "the screen": "ekran",
+    "GitHub repo": "GitHub reposu", "Repository": "Repo", "Linux VMs only.": "Yalnızca Linux VM'lerinde.",
+    "[b]A GitHub repository on {n}[/b]\nCloned into ~/repos there, built and tested by its own build system; "
+    "someone else's code runs on the VM, not here. Follow it in a tab.":
+        "[b]{n} üzerinde bir GitHub reposu[/b]\nOrada ~/repos'a klonlanır, kendi derleme sistemiyle derlenip "
+        "test edilir; başkasının kodu burada değil VM'de çalışır. Bir sekmede izle.",
+    "OWNER/REPO, or its URL": "SAHİBİ/REPO ya da adresi", "Give the repository.": "Repoyu yaz.",
+    "e.g. make check (empty: what its build system has)": "örneğin make check (boş: derleme sisteminin testleri)",
+    "Fork it to my GitHub account (a remote \"fork\"; nothing is pushed)":
+        "GitHub hesabıma fork'la (\"fork\" adında bir remote; hiçbir şey gönderilmez)",
+    "C/C++ with sanitizers (address, undefined)": "C/C++ sanitizer'larla (address, undefined)",
+    "Build only, no tests": "Sadece derle, test etme",
     "The screen of {n} is already open.": "{n} ekranı zaten açık.",
     "Opening the screen of {n}...": "{n} ekranı açılıyor...",
     "Open link": "Linki aç", "No link in this tab.": "Bu sekmede link yok.",
@@ -10347,6 +10683,8 @@ def kind_label(kind):
         return T("Task")
     if kind == "fix":
         return T("Issue")
+    if kind == "repo":
+        return T("Repository")
     return AGENT_NAMES.get(kind, kind)
 
 
@@ -10609,6 +10947,7 @@ class VmforaiUI(App):
                     Binding("a", "task", T("Task")), Binding("x", "try", T("Try"), show=False),
                     Binding("p", "project", T("Project")), Binding("c", "changes", T("Changes")),
                     Binding("f", "fix", T("Fix an issue"), show=False),
+                    Binding("G", "repo", T("GitHub repo"), show=False),
                     Binding("o", "ports", T("Ports")), Binding("v", "view", T("Screen")),
                     Binding("t", "toggle", T("Start/stop")),
                     Binding("u", "snapshots", T("Snapshots")), Binding("r", "resize", T("Resources")),
@@ -10695,7 +11034,7 @@ class VmforaiUI(App):
         t.focus()
         self._seen = None
         self.log_line(T("[dim]Enter or l: open · j/k: move · n: new VM · a: task · x: try on copies · p: project · "
-                        "c: changes · f: fix an issue · H: history · i: network · o: ports · v: screen · t: start/stop · "
+                        "c: changes · f: fix an issue · G: GitHub repo · H: history · i: network · o: ports · v: screen · t: start/stop · "
                         "u: snapshots · Y: yolo · m: phone · L: language · q: quit[/]"))
         self.log_line(T("[dim]Tabs: Ctrl+] list ⇄ last tab · F7/F8 (or Ctrl+PgUp/PgDn) previous/next · "
                         "1 to 9 here: that tab[/]"))
@@ -11028,7 +11367,7 @@ class VmforaiUI(App):
                 last = self.pane(self.last) if self.last in self.pane_ids() else None
                 self.show(last.id if last in terms else terms[-1].id)
             return
-        if kind not in ("shell", "login", "claude", "run", "fix") and vm.get("os") == "windows":
+        if kind not in ("shell", "login", "claude", "run", "fix", "repo") and vm.get("os") == "windows":
             self.notify(T("Only Claude Code runs on Windows VMs."))
             return
         for t in terms:
@@ -11248,6 +11587,32 @@ class VmforaiUI(App):
                               ("test", T("Test command"), vm.get("test") or "", T("e.g. npm test (empty: the agent's own)"))],
                              lambda v: "" if v["issue"].strip().lstrip("#") else T("Give the issue."),
                              [("pr", T("Open a pull request when the tests pass"), True)]), chosen)
+
+    def action_repo(self):
+        """Someone's GitHub repository, built and tested on the VM (vmforai repo), followed in a tab."""
+        if not (vm := self.need_vm(busy_ok=True)):
+            return
+        if vm.get("os") == "windows":
+            self.notify(T("Linux VMs only."))
+            return
+        n = vm["name"]
+
+        def chosen(r):
+            if not r:
+                return
+            argv = [VMFORAI, "repo", n, r["repo"], "--hold"]
+            if r["test"]:
+                argv += ["--test-cmd", r["test"]]
+            argv += [f for f, on in (("--fork", r["fork"]), ("--sanitize", r["sanitize"]), ("--build-only", r["only"])) if on]
+            self.open_session(n, "repo", argv)
+        self.push_screen(Ask(T("[b]A GitHub repository on {n}[/b]\nCloned into ~/repos there, built and tested by its own "
+                               "build system; someone else's code runs on the VM, not here. Follow it in a tab.", n=n),
+                             [("repo", T("Repository"), "", T("OWNER/REPO, or its URL")),
+                              ("test", T("Test command"), "", T("e.g. make check (empty: what its build system has)"))],
+                             lambda v: "" if v["repo"].strip() else T("Give the repository."),
+                             [("fork", T("Fork it to my GitHub account (a remote \"fork\"; nothing is pushed)"), False),
+                              ("sanitize", T("C/C++ with sanitizers (address, undefined)"), False),
+                              ("only", T("Build only, no tests"), False)]), chosen)
 
     def action_history(self):
         if not (vm := self.need_vm(busy_ok=True)):
@@ -11882,7 +12247,7 @@ main() {
       if [[ -n ${2-} ]]; then help_cmd "$2"; else usage; fi ;;
     version | -V | --version) say "vmforai $VERSION" ;;
     __mcp-info | __mcp-run | __mcp-get | __mcp-put | __watch | __runwait | __proxy | __phone | __addr) shift; "cmd_$cmd" "$@" ;;
-    add | create | delete | images | prune | mcp | mount | umount | login | setup | connect | shell | start | stop | autostop | snapshot | snapshots | undo | autosnap | idle | notify | clipboard | open | view | ports | project | changes | take | fix | run | runs | try | tries | net | templates | history | phone | update | deps | tools | yolo | agent | resize | ui | autostart | doctor | list | default | desktop | edit | forget | rm)
+    add | create | delete | images | prune | mcp | mount | umount | login | setup | connect | shell | start | stop | autostop | snapshot | snapshots | undo | autosnap | idle | notify | clipboard | open | view | ports | project | changes | take | fix | repo | repos | run | runs | try | tries | net | templates | history | phone | update | deps | tools | yolo | agent | resize | ui | autostart | doctor | list | default | desktop | edit | forget | rm)
       shift
       if wants_help "$cmd" "$@"; then help_cmd "$cmd"; return 0; fi
       "cmd_$cmd" "$@" ;;

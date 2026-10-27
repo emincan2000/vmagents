@@ -13,7 +13,7 @@
   ![Diller](https://img.shields.io/badge/aray%C3%BCz-EN%20%7C%20TR-orange.svg)
   [![test](https://github.com/emincan2000/vmforai/actions/workflows/test.yml/badge.svg)](https://github.com/emincan2000/vmforai/actions/workflows/test.yml)
 
-  [Kurulum](#kurulum) · [Neden VM?](#vmforai-mi-konteyner-mi-bulut-mu) · [Hızlı başlangıç](#hızlı-başlangıç) · [Terminal arayüzü](#terminal-arayüzü) · [Görevler](#görevler-ve-sormadan-çalışma) · [Telefon](#telefondan) · [Projeler](#projeler) · [Issue'lar](#issuedan-pull-requeste) · [Komutlar](#komutlar) · [Yol haritası](ROADMAP.tr.md)
+  [Kurulum](#kurulum) · [Neden VM?](#vmforai-mi-konteyner-mi-bulut-mu) · [Hızlı başlangıç](#hızlı-başlangıç) · [Terminal arayüzü](#terminal-arayüzü) · [Görevler](#görevler-ve-sormadan-çalışma) · [Telefon](#telefondan) · [Projeler](#projeler) · [Issue'lar](#issuedan-pull-requeste) · [GitHub repoları](#başkasının-github-reposunu-dene) · [Komutlar](#komutlar) · [Yol haritası](ROADMAP.tr.md)
 </div>
 
 ---
@@ -64,6 +64,7 @@ Ya da her şeyi **terminal arayüzünden** yap: `vmforai ui`
 | **Telefondan** | `vmforai phone` bir QR kod gösterir: okut, telefonun tarayıcısında VM'lerin listelenir; asistanlarını bir terminalde açar, görev verip izler, issue çözdürür, VM'leri başlatıp kapatır (Tailscale ile her yerden). `phone notify`: görev bitince ya da asistan beklerken bildirim. SSH uygulamaları için de her VM'e bir port. |
 | **Güvenle sormadan çalışma** | `vmforai yolo dev on`: asistanlar önce sormadan çalışır. Kendi bilgisayarında riskli; VM'de `undo` hepsini geri alır. |
 | **Issue'dan pull request'e** | `vmforai fix dev 42 --test "npm test"`: asistan VM'de 42 numaralı GitHub issue'su üzerinde çalışır, testler orada çalışır (geçmezlerse çıktıları asistana geri gider), geçince bir pull request açılır. |
+| **Başkasının GitHub reposu, güvenle** | `vmforai repo dev sahibi/repo`: VM'e klonlanır, derleme sistemi bulunur (CMake, Meson, Cargo, Go, npm, Python, PlatformIO, make, autotools), eksikleri kurulur, sonra orada derlenip test edilir ve kısa bir özet verilir. C ve C++ için `--sanitize`, katkı için `--fork`. |
 | **Projen, dal olarak geri** | `vmforai project` bir git deposunu VM'e gönderir, `vmforai take` asistanların işini dal ya da pull request olarak geri getirir. VM'de GitHub anahtarı gerekmez. |
 | **İstediğin an yeni VM** | `vmforai create` resmî bir bulut imajından libvirt VM'i kurar (Debian 13, Debian 12, Ubuntu 24.04, Arch Linux); `--template node` (python, ml, go, rust, desktop ya da kendi şablonun) onu bir iş türüne göre hazırlar. |
 | **Geri alma** | Her başlatmadan önce anlık görüntü alınır; `vmforai undo` VM'i oturumdan önceki hâline döndürür. |
@@ -241,6 +242,7 @@ dilini değiştirir (English / Türkçe) ve seçim hatırlanır.
 | `H` | Claude'un VM'deki geçmiş oturumları, bir sekmede: `j`/`k` ile gezin (altta gösterilir), `r` birini sürdürür |
 | `p` / `c` | proje (git deposu) gönder / değişiklikleri sekmede (orada `t`: dal olarak al, `P`: pull request) |
 | `f` | projenin bir GitHub issue'sunu çöz: numarası ve test komutu, sonra bir sekmede izlenir |
+| `G` | bir GitHub reposunu VM'de dene (`vmforai repo`): adı, test komutu, fork, sanitizer'lar |
 | `u` | anlık görüntüler: birine dön, ad ve etiketle yenisini al, etiketini değiştir, sil |
 | `o` | portlar: şimdi yönlendir (`o` tekrar: durdur), her bağlantıda, ya da ağındaki cihazlara da |
 | `v` | VM'in masaüstü (`vmforai view`) |
@@ -463,6 +465,40 @@ vmforai fix dev 42 --test "npm test"
   bir kısmını senden başkaları yazdıysa `fix` kimlerin yazdığını söyler ve önce
   sorar (`--yes` sormaz).
 - Her asistanla: `--codex`, `--gemini`, `--opencode`, `--aider`. Arayüzde: `f`.
+
+## Başkasının GitHub reposunu dene
+
+Başkasının kodunu derleyip test etmek, derleme betikleri ve testleri ne
+yapıyorsa onu çalıştırmak demek. Bunu kendi bilgisayarında değil VM'de yap:
+
+```sh
+vmforai repo dev sahibi/repo                # ya da GitHub adresi
+vmforai repo dev sahibi/lib --sanitize      # C ve C++, ASan ve UBSan ile
+vmforai repo dev sahibi/app --fork --test-cmd "make test-unit"
+vmforai repos dev                           # oradaki klonlar ve son sonuçları
+```
+
+Repoyu VM'de `~/repos` altına klonlar (50 commit derinliğinde, `--depth`;
+`--branch`) ya da o klonu günceller, sonra derleme sistemini bulur: CMake,
+Meson, Cargo, Go, npm, Python (pyproject.toml ya da setup.py), PlatformIO, make
+ya da autotools. Bunun gerektirip VM'de olmayanlar önce kurulur, `vmforai
+tools` gibi. Sonra derler ve testleri çalıştırır (ctest, meson test, cargo test,
+go test, npm test, pytest, make check...) ve bir özetle biter:
+
+```
+sahibi/lib on dev, in ~/repos/lib (cmake): build ok, tests ok (19 passed, 0 failed), 4s.
+Log: ~/.config/vmforai/repos/lib-20261028-013624.log
+```
+
+- Bildiği bir derleme sistemi yoksa README'nin derlemeyle ilgili kısmını
+  gösterir ve klonu sana bırakır (`vmforai shell dev`).
+- `--build-only` testleri atlar; `--json` yalnızca özeti JSON olarak verir.
+  Derlendiyse ve hiçbir test kalmadıysa çıkış kodu 0'dır.
+- `--fork` önce repoyu senin GitHub hesabına fork'lar (burada, `gh` ile) ve o
+  fork'u klona `fork` adlı remote olarak ekler. Hiçbir şey gönderilmez, o iş
+  senin. VM hiçbir zaman GitHub token'ını almaz.
+- Bir asistan da orada çalışabilir: `vmforai shell dev`, sonra `cd ~/repos/lib`
+  ve birini başlat. Arayüzde: `G`.
 
 ## Günlük kullanım
 
@@ -786,6 +822,8 @@ vmforai project AD [KLASÖR]     buradaki bir git deposunu VM'e gönder (--disca
 vmforai changes AD [--stat]     asistanların orada neyi değiştirdiği
 vmforai take AD [--branch DAL] [--pr]   o iş burada dal olarak (ya da pull request)
 vmforai fix AD ISSUE [--test KOMUT] [--tries N] [--no-pr] [--draft]   issue'dan pull request'e
+vmforai repo AD SAHİBİ/REPO [--fork] [--sanitize] [--build-only] [--test-cmd KOMUT]   VM'de derle ve test et
+vmforai repos AD                oradaki denenmiş repolar ve son sonuçları
 
 vmforai open [AD] [PORT...]     VM'in portu burada, tarayıcında ([YEREL:]PORT; --lan)
 vmforai view [AD]               VM'in masaüstü burada (--browser; tools AD desktop ekler)
