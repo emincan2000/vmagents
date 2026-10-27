@@ -1,6 +1,6 @@
 pkgbase = vmforai
 	pkgdesc = Run AI coding agents (Claude Code, Codex, Gemini CLI, OpenCode, aider) inside a virtual machine
-	pkgver = 0.26.1
+	pkgver = 0.27.0
 	pkgrel = 1
 	url = https://github.com/emincan2000/vmforai
 	arch = any
@@ -26,7 +26,7 @@ pkgbase = vmforai
 	provides = vmagents
 	conflicts = vmagents
 	replaces = vmagents
-	source = vmforai-0.26.1.tar.gz::https://github.com/emincan2000/vmforai/archive/refs/tags/v0.26.1.tar.gz
-	sha256sums = fecce98709c758b319e1df7a1d7cce8d53babcfcfe91b76b170300f239e4de44
+	source = vmforai-0.27.0.tar.gz::https://github.com/emincan2000/vmforai/archive/refs/tags/v0.27.0.tar.gz
+	sha256sums = 55b9e5a059281e8c4534e6fa7734b1c7609d474d784c3cc339b0294f5296bee8
 
 pkgname = vmforai
