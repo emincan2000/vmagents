@@ -42,6 +42,7 @@ pre .c { color: var(--dim); }
 .btn.main { background: var(--green); border-color: var(--green); color: var(--bg); font-weight: 600; }
 img { max-width: 100%; height: auto; display: block; border-radius: 10px; border: 1px solid var(--line); }
 .hero-img { margin-top: 40px; }
+.tour { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: #000; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
 .card h3 { margin: 0 0 6px; font-size: 17px; }

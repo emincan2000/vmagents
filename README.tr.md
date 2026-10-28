@@ -20,6 +20,10 @@
 
 ![vmforai: komut satırı (bir görev, sonra undo), beş asistanın sekmelerde açık olduğu terminal arayüzü, telefondan bir VM'e görev verme ve bir VM'in tarayıcıdaki masaüstü](docs/demo.gif)
 
+[![vmforai'ın 54 saniyelik turu, sesli: yeni bir VM'den undo'ya ve telefona kadar bütün özellikleri](docs/video-play.jpg)](https://emincan2000.github.io/vmforai/tr/#video)
+
+54 saniyelik tur, sesli: [izle](https://emincan2000.github.io/vmforai/tr/#video).
+
 **vmforai**, Claude Code, Codex, Gemini CLI, OpenCode ya da aider'ı tek
 komutla **bir sanal makinenin içinde** çalıştırır: VM'i başlatır, SSH ile
 bağlanır ve asistanı orada, tmux içinde açar. Asistan istediğini kurabilir,

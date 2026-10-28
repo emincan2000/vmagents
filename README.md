@@ -20,6 +20,10 @@
 
 ![vmforai: the command line (a task, then undo), the terminal UI with all five agents in tabs, the phone giving a VM a task, and a VM's desktop in the browser](docs/demo.gif)
 
+[![The 54-second tour of vmforai, with sound: every feature, from a new VM to undo and the phone](docs/video-play.jpg)](https://emincan2000.github.io/vmforai/#video)
+
+The 54-second tour, with sound: [watch it](https://emincan2000.github.io/vmforai/#video).
+
 **vmforai** runs Claude Code, Codex, Gemini CLI, OpenCode or aider **inside a
 virtual machine**, with one command: it starts the VM, connects over SSH and
 opens the agent there, in tmux. The agent may install, run and break whatever
